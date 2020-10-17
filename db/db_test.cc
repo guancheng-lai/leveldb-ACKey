@@ -1878,6 +1878,7 @@ TEST_F(DBTest, BloomFilter) {
   Options options = CurrentOptions();
   options.env = env_;
   options.block_cache = NewLRUCache(0);  // Prevent cache hits
+  options.kv_cache = NewLRUCache(0);  // Prevent cache hits
   options.filter_policy = NewBloomFilterPolicy(10);
   Reopen(&options);
 
@@ -1917,6 +1918,7 @@ TEST_F(DBTest, BloomFilter) {
   env_->delay_data_sync_.store(false, std::memory_order_release);
   Close();
   delete options.block_cache;
+  delete options.kv_cache;
   delete options.filter_policy;
 }
 

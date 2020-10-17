@@ -56,8 +56,7 @@ static const char* FLAGS_benchmarks =
     "readreverse,"
     "fill100K,"
     "crc32c,"
-    "snappycomp,"
-    "snappyuncomp,";
+    "readhot,";
 
 // Number of key/values to place in database
 static int FLAGS_num = 1000000;
@@ -312,7 +311,7 @@ struct ThreadState {
 
 class Benchmark {
  private:
-  Cache* cache_;
+  Cache* cache_, *kv_cache_;
   const FilterPolicy* filter_policy_;
   DB* db_;
   int num_;
@@ -403,6 +402,7 @@ class Benchmark {
  public:
   Benchmark()
       : cache_(FLAGS_cache_size >= 0 ? NewLRUCache(FLAGS_cache_size) : nullptr),
+        kv_cache_(FLAGS_cache_size >= 0 ? NewLRUCache(FLAGS_cache_size) : nullptr),
         filter_policy_(FLAGS_bloom_bits >= 0
                            ? NewBloomFilterPolicy(FLAGS_bloom_bits)
                            : nullptr),
@@ -427,6 +427,7 @@ class Benchmark {
   ~Benchmark() {
     delete db_;
     delete cache_;
+    delete kv_cache_;
     delete filter_policy_;
   }
 
@@ -691,6 +692,7 @@ class Benchmark {
     options.env = g_env;
     options.create_if_missing = !FLAGS_use_existing_db;
     options.block_cache = cache_;
+    options.kv_cache = cache_;
     options.write_buffer_size = FLAGS_write_buffer_size;
     options.max_file_size = FLAGS_max_file_size;
     options.block_size = FLAGS_block_size;

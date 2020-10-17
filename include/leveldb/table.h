@@ -62,6 +62,7 @@ class LEVELDB_EXPORT Table {
   friend class TableCache;
   struct Rep;
 
+  static Status KeyValueReader(void *arg, const ReadOptions &options, const Slice &index_value, Slice **res);
   static Iterator* BlockReader(void*, const ReadOptions&, const Slice&);
 
   explicit Table(Rep* rep) : rep_(rep) {}
