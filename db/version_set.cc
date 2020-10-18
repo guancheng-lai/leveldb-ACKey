@@ -351,6 +351,19 @@ Status Version::Get(const ReadOptions& options, const LookupKey& k,
       state->last_file_read = f;
       state->last_file_read_level = level;
 
+      Cache::Handle* cache_handle = nullptr;
+      Cache *kv_cache = state->vset->options_->kv_cache;
+      if (kv_cache != nullptr) {
+        cache_handle = state->vset->options_->kv_cache->Lookup(state->ikey);
+        if (cache_handle != nullptr) {
+          kv_cache->Release(cache_handle);
+          Slice *res = reinterpret_cast<Slice*>(reinterpret_cast<LRUHandle*>(cache_handle)->value);
+          SaveValue(&state->saver, state->ikey, *res);
+          state->found = true;
+          return false;
+        }
+      }
+
       state->s = state->vset->table_cache_->Get(*state->options, f->number,
                                                 f->file_size, state->ikey,
                                                 &state->saver, SaveValue);

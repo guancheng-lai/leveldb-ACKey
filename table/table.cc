@@ -148,24 +148,6 @@ static void ReleaseBlock(void* arg, void* h) {
   cache->Release(handle);
 }
 
-Status Table::KeyValueReader(void *arg, const ReadOptions &options, const Slice &k, Slice **res) {
-  Cache* kv_cache = reinterpret_cast<Table*>(arg)->rep_->options.kv_cache;
-  Cache::Handle* cache_handle = nullptr;
-  if (kv_cache != nullptr) {
-    cache_handle = kv_cache->Lookup(k);
-    if (cache_handle != nullptr) {
-      LRUHandle* lruHandle = reinterpret_cast<LRUHandle*>(cache_handle);
-      *res = reinterpret_cast<Slice*>(lruHandle->value);
-      ReleaseBlock(kv_cache, cache_handle);
-    }
-  }
-
-  if (cache_handle == nullptr || *res == nullptr) {
-    return Status::NotFound("");
-  }
-  return Status::OK();
-}
-
 // Convert an index iterator value (i.e., an encoded BlockHandle)
 // into an iterator over the contents of the corresponding block.
 Iterator* Table::BlockReader(void* arg, const ReadOptions& options,
@@ -243,8 +225,6 @@ Status Table::InternalGet(const ReadOptions& options, const Slice& k, void* arg,
     if (filter != nullptr && handle.DecodeFrom(&handle_value).ok() &&
         !filter->KeyMayMatch(handle.offset(), k)) {
       // Not found
-    } else if (KeyValueReader(this, options, k, &res).ok()) {
-      (*handle_result)(arg, k, *res);
     } else {
       Iterator* block_iter = BlockReader(this, options, iiter->value());
       block_iter->Seek(k);
