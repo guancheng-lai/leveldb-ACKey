@@ -148,20 +148,11 @@ static void ReleaseBlock(void* arg, void* h) {
   cache->Release(handle);
 }
 
-Status Table::KeyValueReader(void *arg, const ReadOptions &options, const Slice &index_value, Slice **res) {
-  Table* table = reinterpret_cast<Table*>(arg);
-  Cache* kv_cache = table->rep_->options.kv_cache;
+Status Table::KeyValueReader(void *arg, const ReadOptions &options, const Slice &k, Slice **res) {
+  Cache* kv_cache = reinterpret_cast<Table*>(arg)->rep_->options.kv_cache;
   Cache::Handle* cache_handle = nullptr;
-
-  BlockHandle handle;
-  Slice input = index_value;
-  Status s = handle.DecodeFrom(&input);
-  if (s.ok() && kv_cache != nullptr) {
-    char cache_key_buffer[16];
-    EncodeFixed64(cache_key_buffer, table->rep_->cache_id);
-    EncodeFixed64(cache_key_buffer + 8, handle.offset());
-    Slice key(cache_key_buffer, sizeof(cache_key_buffer));
-    cache_handle = kv_cache->Lookup(key);
+  if (kv_cache != nullptr) {
+    cache_handle = kv_cache->Lookup(k);
     if (cache_handle != nullptr) {
       LRUHandle* lruHandle = reinterpret_cast<LRUHandle*>(cache_handle);
       *res = reinterpret_cast<Slice*>(lruHandle->value);
@@ -172,7 +163,7 @@ Status Table::KeyValueReader(void *arg, const ReadOptions &options, const Slice 
   if (cache_handle == nullptr || *res == nullptr) {
     return Status::NotFound("");
   }
-  return s;
+  return Status::OK();
 }
 
 // Convert an index iterator value (i.e., an encoded BlockHandle)
@@ -252,15 +243,15 @@ Status Table::InternalGet(const ReadOptions& options, const Slice& k, void* arg,
     if (filter != nullptr && handle.DecodeFrom(&handle_value).ok() &&
         !filter->KeyMayMatch(handle.offset(), k)) {
       // Not found
-    } else if (KeyValueReader(this, options, iiter->value(), &res).ok()) {
-      (*handle_result)(arg, k, res->data());
+    } else if (KeyValueReader(this, options, k, &res).ok()) {
+      (*handle_result)(arg, k, *res);
     } else {
       Iterator* block_iter = BlockReader(this, options, iiter->value());
       block_iter->Seek(k);
       if (block_iter->Valid()) {
         (*handle_result)(arg, block_iter->key(), block_iter->value());
         Slice* valInsert = new Slice(block_iter->value());
-        Cache::Handle* hd = rep_->options.kv_cache->Insert(k, valInsert, valInsert->size(),
+        Cache::Handle* hd = rep_->options.kv_cache->Insert(block_iter->key(), valInsert, valInsert->size(),
           [](const Slice& key, void* value) { delete reinterpret_cast<Slice*>(value); }
         );
         ReleaseBlock(rep_->options.kv_cache, hd);
