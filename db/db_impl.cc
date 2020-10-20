@@ -11,7 +11,6 @@
 #include <set>
 #include <string>
 #include <vector>
-#include <iostream>
 
 #include "db/builder.h"
 #include "db/db_iter.h"
