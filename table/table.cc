@@ -150,8 +150,7 @@ static void ReleaseBlock(void* arg, void* h) {
 
 // Convert an index iterator value (i.e., an encoded BlockHandle)
 // into an iterator over the contents of the corresponding block.
-Iterator* Table::BlockReader(void* arg, const ReadOptions& options,
-                             const Slice& index_value) {
+Iterator* Table::BlockReader(void* arg, const ReadOptions& options, const Slice& index_value) {
   Table* table = reinterpret_cast<Table*>(arg);
   Cache* block_cache = table->rep_->options.block_cache;
   Block* block = nullptr;
@@ -180,6 +179,14 @@ Iterator* Table::BlockReader(void* arg, const ReadOptions& options,
           if (contents.cachable && options.fill_cache) {
             cache_handle = block_cache->Insert(key, block, block->size(),
                                                &DeleteCachedBlock);
+            // check the total size
+            Cache* kv_cache = table->rep_->options.kv_cache;
+            size_t total_usage_now = block_cache->TotalCharge() +
+                kv_cache->TotalCharge();
+            size_t needed_removed = total_usage_now - table->rep_->options.total_cache_size;
+            if(needed_removed > 10){
+                table->rep_->options.kv_cache->EvictFixSizeRoundInShard(needed_removed);
+            }
           }
         }
       }
@@ -234,6 +241,16 @@ Status Table::InternalGet(const ReadOptions& options, const Slice& k, void* arg,
         Cache::Handle* hd = rep_->options.kv_cache->Insert(block_iter->key(), valInsert, valInsert->size(),
           [](const Slice& key, void* value) { delete reinterpret_cast<Slice*>(value); }
         );
+        size_t total_usage_now = rep_->options.block_cache->TotalCharge() +
+                           rep_->options.kv_cache->TotalCharge();
+        size_t needed_removed = total_usage_now - rep_->options.total_cache_size;
+        if(needed_removed > 10){
+          char cache_key_buffer[16];
+          EncodeFixed64(cache_key_buffer, rep_->cache_id);
+          EncodeFixed64(cache_key_buffer + 8, handle.offset());
+          Slice key(cache_key_buffer, sizeof(cache_key_buffer));
+          rep_->options.block_cache->EvictFixSizeInShard(needed_removed, key);
+        }
         ReleaseBlock(rep_->options.kv_cache, hd);
       }
       s = block_iter->status();

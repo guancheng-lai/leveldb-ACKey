@@ -94,6 +94,9 @@ struct LEVELDB_EXPORT Options {
   Cache* block_cache = nullptr;
   Cache* kv_cache = nullptr;
 
+  // total size of dynamic cache, default 16M.
+  size_t total_cache_size = 16 * 1024 * 1024;
+
   // Approximate size of user data packed per block.  Note that the
   // block size specified here corresponds to uncompressed data.  The
   // actual size of the unit read from disk may be smaller if

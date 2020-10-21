@@ -143,6 +143,8 @@ class LRUCache {
   void Release(Cache::Handle* handle);
   void Erase(const Slice& key, uint32_t hash);
   void Prune();
+  size_t EvictFixSize(size_t needed_evict_size);
+  size_t Evict();
   size_t TotalCharge() const {
     MutexLock l(&mutex_);
     return usage_;
@@ -270,14 +272,15 @@ Cache::Handle* LRUCache::Insert(const Slice& key, uint32_t hash, void* value,
     // next is read by key() in an assert, so it must be initialized
     e->next = nullptr;
   }
-  while (usage_ > capacity_ && lru_.next != &lru_) {
-    LRUHandle* old = lru_.next;
-    assert(old->refs == 1);
-    bool erased = FinishErase(table_.Remove(old->key(), old->hash));
-    if (!erased) {  // to avoid unused variable when compiled NDEBUG
-      assert(erased);
-    }
-  }
+
+  //  while (usage_ > capacity_ && lru_.next != &lru_) {
+  //    LRUHandle* old = lru_.next;
+  //    assert(old->refs == 1);
+  //    bool erased = FinishErase(table_.Remove(old->key(), old->hash));
+  //    if (!erased) {  // to avoid unused variable when compiled NDEBUG
+  //      assert(erased);
+  //    }
+  //  }
 
   return reinterpret_cast<Cache::Handle*>(e);
 }
@@ -310,6 +313,36 @@ void LRUCache::Prune() {
       assert(erased);
     }
   }
+}
+
+size_t LRUCache::EvictFixSize(size_t needed_evict_size) {
+  MutexLock l(&mutex_);
+  size_t size_removed = 0;
+  while (size_removed < needed_evict_size && lru_.next != &lru_) {
+    LRUHandle* old = lru_.next;
+    assert(old->refs == 1);
+    bool erased = FinishErase(table_.Remove(old->key(), old->hash));
+    if (!erased) {  // to avoid unused variable when compiled NDEBUG
+      assert(erased);
+    }
+    size_removed += old->charge;
+  }
+  return size_removed;
+}
+
+size_t LRUCache::Evict() {
+  MutexLock l(&mutex_);
+  size_t rm_size = 0;
+  if (lru_.next != &lru_) {
+    LRUHandle* old = lru_.next;
+    assert(old->refs == 1);
+    bool erased = FinishErase(table_.Remove(old->key(), old->hash));
+    if (!erased) {  // to avoid unused variable when compiled NDEBUG
+      assert(erased);
+    }
+    rm_size = old->charge;
+  }
+  return rm_size;
 }
 
 static const int kNumShardBits = 4;
@@ -364,6 +397,32 @@ class ShardedLRUCache : public Cache {
       shard_[s].Prune();
     }
   }
+
+  size_t EvictFixSizeRoundInShard(const size_t target_size) override {
+    size_t removed_size = 0, cur_rm = 0;
+    bool can_continue = false;
+    while (removed_size < target_size) {
+      for (int s = 0; s < kNumShards && removed_size < target_size; s++) {
+        cur_rm = shard_[s].Evict();
+        removed_size += cur_rm;
+        if (!can_continue && cur_rm > 0) {
+          can_continue = true;
+        }
+      }
+      if (!can_continue)
+        break;
+      else
+        can_continue = false;
+    }
+    return removed_size;
+  }
+
+  size_t EvictFixSizeInShard(const size_t target_size, const Slice& key) override {
+    const uint32_t hash = HashSlice(key);
+    size_t removed_size = shard_[Shard(hash)].EvictFixSize(target_size);
+    return removed_size;
+  }
+
   size_t TotalCharge() const override {
     size_t total = 0;
     for (int s = 0; s < kNumShards; s++) {

@@ -115,6 +115,10 @@ class LEVELDB_EXPORT Cache {
   // leveldb may change Prune() to a pure abstract method.
   virtual void Prune() {}
 
+  // evict the element in the LRU cache until the total usage is below target_size
+  virtual size_t EvictFixSizeInShard(const size_t target_size, const Slice& key) = 0;
+  virtual size_t EvictFixSizeRoundInShard(const size_t target_size) = 0;
+
   // Return an estimate of the combined charges of all elements stored in the
   // cache.
   virtual size_t TotalCharge() const = 0;
