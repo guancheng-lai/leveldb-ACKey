@@ -351,19 +351,6 @@ Status Version::Get(const ReadOptions& options, const LookupKey& k,
       state->last_file_read = f;
       state->last_file_read_level = level;
 
-      Cache *kv_cache = state->vset->options_->kv_cache;
-      if (kv_cache != nullptr) {
-        Cache::Handle* cache_handle = nullptr;
-        cache_handle = kv_cache->Lookup(state->ikey);
-        if (cache_handle != nullptr) {
-          kv_cache->Release(cache_handle);
-          Slice *res = reinterpret_cast<Slice*>(reinterpret_cast<LRUHandle*>(cache_handle)->value);
-          SaveValue(&state->saver, state->ikey, *res);
-          state->found = true;
-          return false;
-        }
-      }
-
       state->s = state->vset->table_cache_->Get(*state->options, f->number,
                                                 f->file_size, state->ikey,
                                                 &state->saver, SaveValue);
@@ -406,6 +393,25 @@ Status Version::Get(const ReadOptions& options, const LookupKey& k,
   state.saver.ucmp = vset_->icmp_.user_comparator();
   state.saver.user_key = k.user_key();
   state.saver.value = value;
+
+  Cache *kv_cache = state.vset->options_->kv_cache;
+  if (kv_cache != nullptr) {
+    Cache::Handle* cache_handle = nullptr;
+    cache_handle = kv_cache->Lookup(state.ikey);
+    if (cache_handle != nullptr) {
+      kv_cache->Release(cache_handle);
+      Slice *res = reinterpret_cast<Slice*>(reinterpret_cast<LRUHandle*>(cache_handle)->value);
+      SaveValue(&state.saver, state.ikey, *res);
+      state.found = true;
+      return state.s;
+    }
+  }
+
+  // Lookup kp
+  // True -> Remove kp, insert kv
+  // False -> Mark warm key, overlapping, -> GetResult
+  //    Warm -> Insert kv
+  //    Cold -> Insert kp
 
   ForEachOverlapping(state.saver.user_key, state.ikey, &state, &State::Match);
 

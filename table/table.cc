@@ -229,6 +229,9 @@ Status Table::InternalGet(const ReadOptions& options, const Slice& k, void* arg,
       block_iter->Seek(k);
       if (block_iter->Valid()) {
         (*handle_result)(arg, block_iter->key(), block_iter->value());
+
+        // Insert KP(Cold), KV(Warm)
+
         Slice* valInsert = new Slice(block_iter->value());
         Cache::Handle* hd = rep_->options.kv_cache->Insert(block_iter->key(), valInsert, valInsert->size(),
           [](const Slice& key, void* value) { delete reinterpret_cast<Slice*>(value); }
