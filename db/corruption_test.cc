@@ -25,9 +25,11 @@ class CorruptionTest : public testing::Test {
   CorruptionTest()
       : db_(nullptr),
         dbname_("/memenv/corruption_test"),
-        tiny_cache_(NewLRUCache(100)) {
+        tiny_cache_(NewLRUCache(100)),
+        tiny_kv_cache_(NewLRUCache(100)){
     options_.env = &env_;
     options_.block_cache = tiny_cache_;
+    options_.kv_cache = tiny_kv_cache_;
     DestroyDB(dbname_, options_);
 
     options_.create_if_missing = true;
@@ -188,6 +190,7 @@ class CorruptionTest : public testing::Test {
  private:
   std::string dbname_;
   Cache* tiny_cache_;
+  Cache* tiny_kv_cache_;
 };
 
 TEST_F(CorruptionTest, Recovery) {

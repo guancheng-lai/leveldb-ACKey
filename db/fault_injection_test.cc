@@ -369,12 +369,14 @@ class FaultInjectionTest : public testing::Test {
   FaultInjectionTestEnv* env_;
   std::string dbname_;
   Cache* tiny_cache_;
+  Cache* tiny_kv_cache_;
   Options options_;
   DB* db_;
 
   FaultInjectionTest()
       : env_(new FaultInjectionTestEnv),
         tiny_cache_(NewLRUCache(100)),
+        tiny_kv_cache_(NewLRUCache(100)),
         db_(nullptr) {
     dbname_ = testing::TempDir() + "fault_test";
     DestroyDB(dbname_, Options());  // Destroy any db from earlier run
@@ -382,6 +384,7 @@ class FaultInjectionTest : public testing::Test {
     options_.env = env_;
     options_.paranoid_checks = true;
     options_.block_cache = tiny_cache_;
+    options_.kv_cache = tiny_kv_cache_;
     options_.create_if_missing = true;
   }
 
@@ -389,6 +392,7 @@ class FaultInjectionTest : public testing::Test {
     CloseDB();
     DestroyDB(dbname_, Options());
     delete tiny_cache_;
+    delete tiny_kv_cache_;
     delete env_;
   }
 
