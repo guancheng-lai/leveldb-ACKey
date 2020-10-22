@@ -212,7 +212,8 @@ Iterator* Table::NewIterator(const ReadOptions& options) const {
 }
 
 Status Table::InternalGet(const ReadOptions& options, const Slice& k, void* arg,
-                          void (*handle_result)(void*, const Slice&,
+                          KeyPointer *keyPointer, bool warm,
+                          int (*handle_result)(void*, const Slice&,
                                                 const Slice&)) {
   Status s;
   Iterator* iiter = rep_->index_block->NewIterator(rep_->options.comparator);
@@ -228,15 +229,32 @@ Status Table::InternalGet(const ReadOptions& options, const Slice& k, void* arg,
       Iterator* block_iter = BlockReader(this, options, iiter->value());
       block_iter->Seek(k);
       if (block_iter->Valid()) {
-        (*handle_result)(arg, block_iter->key(), block_iter->value());
-
-        // Insert KP(Cold), KV(Warm)
-
-        Slice* valInsert = new Slice(block_iter->value());
-        Cache::Handle* hd = rep_->options.kv_cache->Insert(block_iter->key(), valInsert, valInsert->size(),
-          [](const Slice& key, void* value) { delete reinterpret_cast<Slice*>(value); }
-        );
-        ReleaseBlock(rep_->options.kv_cache, hd);
+        int saveResult = (*handle_result)(arg, block_iter->key(), block_iter->value());
+        if (saveResult == 1) {
+          if (warm) {
+            // Insert into KV
+            size_t sz = block_iter->value().size();
+            char *chr = new char[sz];
+            memcpy(chr, block_iter->value().data(), sz);
+            Slice* valInsert = new Slice(chr, sz);
+            Cache::Handle* hd = rep_->options.kv_cache->Insert(
+              k,
+              valInsert,
+              valInsert->size(),
+              [](const Slice& key, void* value) { delete reinterpret_cast<Slice*>(value); }
+            );
+            ReleaseBlock(rep_->options.kv_cache, hd);
+          } else {
+            // Insert into KP
+            Cache::Handle* hd = rep_->options.kp_cache->Insert(
+              k,
+              keyPointer,
+              sizeof(KeyPointer),
+              [](const Slice& key, void* value) { delete reinterpret_cast<KeyPointer*>(value); }
+            );
+            ReleaseBlock(rep_->options.kp_cache, hd);
+          }
+        }
       }
       s = block_iter->status();
       delete block_iter;

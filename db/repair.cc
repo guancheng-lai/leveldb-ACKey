@@ -65,6 +65,7 @@ class Repairer {
     if (owns_cache_) {
       delete options_.block_cache;
       delete options_.kv_cache;
+      delete options_.kp_cache;
     }
   }
 

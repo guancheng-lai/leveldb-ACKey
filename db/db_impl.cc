@@ -11,6 +11,7 @@
 #include <set>
 #include <string>
 #include <vector>
+#include <iostream>
 
 #include "db/builder.h"
 #include "db/db_iter.h"
@@ -118,6 +119,9 @@ Options SanitizeOptions(const std::string& dbname,
   if (result.kv_cache == nullptr) {
     result.kv_cache = NewLRUCache(8 << 20);
   }
+  if (result.kp_cache == nullptr) {
+    result.kp_cache = NewLRUCache(8 << 20);
+  }
   return result;
 }
 
@@ -179,6 +183,7 @@ DBImpl::~DBImpl() {
   if (owns_cache_) {
     delete options_.block_cache;
     delete options_.kv_cache;
+    delete options_.kp_cache;
   }
 }
 
@@ -1429,7 +1434,9 @@ bool DBImpl::GetProperty(const Slice& property, std::string* value) {
     *value = versions_->current()->DebugString();
     return true;
   } else if (in == "approximate-memory-usage") {
-    size_t total_usage = options_.block_cache->TotalCharge() + options_.kv_cache->TotalCharge();
+    size_t total_usage = options_.block_cache->TotalCharge()
+      + options_.kv_cache->TotalCharge()
+      + options_.kp_cache->TotalCharge();
     if (mem_) {
       total_usage += mem_->ApproximateMemoryUsage();
     }

@@ -6,6 +6,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <db/db_impl.h>
 
 #include "leveldb/cache.h"
 #include "leveldb/db.h"
@@ -56,7 +57,8 @@ static const char* FLAGS_benchmarks =
     "readreverse,"
     "fill100K,"
     "crc32c,"
-    "readhot,";
+    "readhot,"
+    "readsuperhot,";
 
 // Number of key/values to place in database
 static int FLAGS_num = 1000000;
@@ -311,7 +313,7 @@ struct ThreadState {
 
 class Benchmark {
  private:
-  Cache* cache_, *kv_cache_;
+  Cache *bk_cache_, *kv_cache_, *kp_cache_;
   const FilterPolicy* filter_policy_;
   DB* db_;
   int num_;
@@ -401,8 +403,9 @@ class Benchmark {
 
  public:
   Benchmark()
-      : cache_(FLAGS_cache_size >= 0 ? NewLRUCache(FLAGS_cache_size) : nullptr),
+      : bk_cache_(FLAGS_cache_size >= 0 ? NewLRUCache(FLAGS_cache_size) : nullptr),
         kv_cache_(FLAGS_cache_size >= 0 ? NewLRUCache(FLAGS_cache_size) : nullptr),
+        kp_cache_(FLAGS_cache_size >= 0 ? NewLRUCache(FLAGS_cache_size) : nullptr),
         filter_policy_(FLAGS_bloom_bits >= 0
                            ? NewBloomFilterPolicy(FLAGS_bloom_bits)
                            : nullptr),
@@ -426,8 +429,9 @@ class Benchmark {
 
   ~Benchmark() {
     delete db_;
-    delete cache_;
+    delete bk_cache_;
     delete kv_cache_;
+    delete kp_cache_;
     delete filter_policy_;
   }
 
@@ -500,6 +504,8 @@ class Benchmark {
       } else if (name == Slice("readrandomsmall")) {
         reads_ /= 1000;
         method = &Benchmark::ReadRandom;
+      } else if (name == Slice("readsuperhot")) {
+        method = &Benchmark::ReadSuperHot;
       } else if (name == Slice("deleteseq")) {
         method = &Benchmark::DeleteSeq;
       } else if (name == Slice("deleterandom")) {
@@ -691,8 +697,9 @@ class Benchmark {
     Options options;
     options.env = g_env;
     options.create_if_missing = !FLAGS_use_existing_db;
-    options.block_cache = cache_;
+    options.block_cache = bk_cache_;
     options.kv_cache = kv_cache_;
+    options.kp_cache = kp_cache_;
     options.write_buffer_size = FLAGS_write_buffer_size;
     options.max_file_size = FLAGS_max_file_size;
     options.block_size = FLAGS_block_size;
@@ -811,6 +818,39 @@ class Benchmark {
     for (int i = 0; i < reads_; i++) {
       char key[100];
       const int k = thread->rand.Next() % range;
+      std::snprintf(key, sizeof(key), "%016d", k);
+      db_->Get(options, key, &value);
+      thread->stats.FinishedSingleOp();
+    }
+  }
+
+  void ReadSuperHot(ThreadState* thread) {
+    ReadOptions options;
+    std::string value;
+    const int range = (FLAGS_num + 99) / 100;
+    DBImpl* dbimp = reinterpret_cast<DBImpl*>(db_);
+    const int numKeys = 20000;
+    std::string userKey[numKeys];
+    for (int i = 0; i < numKeys; i++) {
+      const int k = thread->rand.Next() % range;
+      char key[100], val[100];
+      std::snprintf(key, sizeof(key), "%016d", k);
+      std::snprintf(val, sizeof(val), "%099d", k);
+      userKey[i] = key;
+      db_->Put(WriteOptions(), userKey[i], val);
+    }
+
+    dbimp->TEST_CompactMemTable();
+
+    for (int i = 0; i < reads_ ; i++) {
+      for (int j = 0; j < 100; ++j) {
+        const int k = thread->rand.Next() % numKeys;
+        db_->Get(options, userKey[k], &value);
+        thread->stats.FinishedSingleOp();
+      }
+
+      const int k = thread->rand.Next() % range;
+      char key[100];
       std::snprintf(key, sizeof(key), "%016d", k);
       db_->Get(options, key, &value);
       thread->stats.FinishedSingleOp();

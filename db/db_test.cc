@@ -606,6 +606,26 @@ TEST_F(DBTest, GetFromImmutableLayer) {
   } while (ChangeOptions());
 }
 
+TEST_F(DBTest, ACKeyTest) {
+  do {
+    ASSERT_LEVELDB_OK(db_->Put(WriteOptions(), "foo", "v1"));
+    ASSERT_EQ("v1", Get("foo"));
+    dbfull()->TEST_CompactMemTable();
+    for (int i = 0; i < 100; ++i) {
+      ASSERT_EQ("v1", Get("foo"));
+    }
+
+    ASSERT_LEVELDB_OK(db_->Put(WriteOptions(), "foo", "v2"));
+    dbfull()->TEST_CompactMemTable();
+    ASSERT_EQ("v2", Get("foo"));
+
+    ASSERT_LEVELDB_OK(db_->Put(WriteOptions(), "bar", "b1"));
+    dbfull()->TEST_CompactMemTable();
+    ASSERT_EQ("v2", Get("foo"));
+
+  } while (ChangeOptions());
+}
+
 TEST_F(DBTest, GetFromVersions) {
   do {
     ASSERT_LEVELDB_OK(Put("foo", "v1"));
@@ -1879,6 +1899,7 @@ TEST_F(DBTest, BloomFilter) {
   options.env = env_;
   options.block_cache = NewLRUCache(0);  // Prevent cache hits
   options.kv_cache = NewLRUCache(0);  // Prevent cache hits
+  options.kp_cache = NewLRUCache(0);  // Prevent cache hits
   options.filter_policy = NewBloomFilterPolicy(10);
   Reopen(&options);
 
@@ -1919,6 +1940,7 @@ TEST_F(DBTest, BloomFilter) {
   Close();
   delete options.block_cache;
   delete options.kv_cache;
+  delete options.kp_cache;
   delete options.filter_policy;
 }
 

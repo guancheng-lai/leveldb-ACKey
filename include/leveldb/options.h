@@ -93,6 +93,7 @@ struct LEVELDB_EXPORT Options {
   // If null, leveldb will automatically create and use an 8MB internal cache.
   Cache* block_cache = nullptr;
   Cache* kv_cache = nullptr;
+  Cache* kp_cache = nullptr;
 
   // Approximate size of user data packed per block.  Note that the
   // block size specified here corresponds to uncompressed data.  The
