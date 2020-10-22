@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 
+#include <util/SimpleMetrics.hpp>
 #include "leveldb/table.h"
 
 #include "leveldb/cache.h"
@@ -172,8 +173,10 @@ Iterator* Table::BlockReader(void* arg, const ReadOptions& options,
       Slice key(cache_key_buffer, sizeof(cache_key_buffer));
       cache_handle = block_cache->Lookup(key);
       if (cache_handle != nullptr) {
+//        SimpleMetrics::GetMetrics().AddProperty("BLOCK", "HIT");
         block = reinterpret_cast<Block*>(block_cache->Value(cache_handle));
       } else {
+//        SimpleMetrics::GetMetrics().AddProperty("BLOCK", "MISS");
         s = ReadBlock(table->rep_->file, options, handle, &contents);
         if (s.ok()) {
           block = new Block(contents);

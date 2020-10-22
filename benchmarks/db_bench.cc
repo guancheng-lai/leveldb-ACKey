@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <db/db_impl.h>
+#include <util/SimpleMetrics.hpp>
 
 #include "leveldb/cache.h"
 #include "leveldb/db.h"
@@ -1025,7 +1026,8 @@ int main(int argc, char** argv) {
     default_db_path += "/dbbench";
     FLAGS_db = default_db_path.c_str();
   }
-
+  SimpleMetrics::GetMetrics().AddMessage("Cache Size", std::to_string(FLAGS_cache_size));
+  SimpleMetrics::GetMetrics().AddMessage("Num of Entries", std::to_string(FLAGS_num));
   leveldb::Benchmark benchmark;
   benchmark.Run();
   return 0;

@@ -283,7 +283,7 @@ target_link_libraries(leveldb Threads::Threads)
 
 add_executable(leveldbutil
   "db/leveldbutil.cc"
-)
+        util/SimpleMetrics.hpp)
 target_link_libraries(leveldbutil leveldb)
 
 if(LEVELDB_BUILD_TESTS)
