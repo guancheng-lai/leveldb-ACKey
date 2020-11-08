@@ -7,7 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <db/db_impl.h>
-#include <util/SimpleMetrics.hpp>
+#include <util/metrics.hpp>
 
 #include "leveldb/cache.h"
 #include "leveldb/db.h"
@@ -58,8 +58,8 @@ static const char* FLAGS_benchmarks =
     "readreverse,"
     "fill100K,"
     "crc32c,"
-    "readhot,"
-    "readsuperhot,";
+    "readhot,";
+//    "readsuperhot,";
 
 // Number of key/values to place in database
 static int FLAGS_num = 1000000;
@@ -1026,8 +1026,11 @@ int main(int argc, char** argv) {
     default_db_path += "/dbbench";
     FLAGS_db = default_db_path.c_str();
   }
-  SimpleMetrics::GetMetrics().AddMessage("Cache Size", std::to_string(FLAGS_cache_size));
-  SimpleMetrics::GetMetrics().AddMessage("Num of Entries", std::to_string(FLAGS_num));
+#ifndef NDEBUG
+  metrics::GetMetrics().AddProperty("Cache Size", FLAGS_cache_size);
+  metrics::GetMetrics().AddProperty("Num of Entries", FLAGS_num);
+#endif
+
   leveldb::Benchmark benchmark;
   benchmark.Run();
   return 0;

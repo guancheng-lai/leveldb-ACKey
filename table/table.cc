@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 
-#include <util/SimpleMetrics.hpp>
+#include <util/metrics.hpp>
 #include "leveldb/table.h"
 
 #include "leveldb/cache.h"
@@ -173,16 +173,23 @@ Iterator* Table::BlockReader(void* arg, const ReadOptions& options,
       Slice key(cache_key_buffer, sizeof(cache_key_buffer));
       cache_handle = block_cache->Lookup(key);
       if (cache_handle != nullptr) {
-//        SimpleMetrics::GetMetrics().AddProperty("BLOCK", "HIT");
+#ifndef NDEBUG
+        metrics::GetMetrics().AddCount("BLOCK", "HIT");
+#endif
         block = reinterpret_cast<Block*>(block_cache->Value(cache_handle));
       } else {
-//        SimpleMetrics::GetMetrics().AddProperty("BLOCK", "MISS");
+#ifndef NDEBUG
+        metrics::GetMetrics().AddCount("BLOCK", "MISS");
+#endif
         s = ReadBlock(table->rep_->file, options, handle, &contents);
         if (s.ok()) {
           block = new Block(contents);
           if (contents.cachable && options.fill_cache) {
             cache_handle = block_cache->Insert(key, block, block->size(),
                                                &DeleteCachedBlock);
+#ifndef NDEBUG
+            metrics::GetMetrics().AddUsage("BK", block_cache->TotalCharge());
+#endif
           }
         }
       }
@@ -247,6 +254,9 @@ Status Table::InternalGet(const ReadOptions& options, const Slice& k, void* arg,
               [](const Slice& key, void* value) { delete reinterpret_cast<Slice*>(value); }
             );
             ReleaseBlock(rep_->options.kv_cache, hd);
+#ifndef NDEBUG
+            metrics::GetMetrics().AddUsage("KV", rep_->options.kv_cache->TotalCharge());
+#endif
           } else {
             // Insert into KP
             Cache::Handle* hd = rep_->options.kp_cache->Insert(
@@ -256,6 +266,9 @@ Status Table::InternalGet(const ReadOptions& options, const Slice& k, void* arg,
               [](const Slice& key, void* value) { delete reinterpret_cast<KeyPointer*>(value); }
             );
             ReleaseBlock(rep_->options.kp_cache, hd);
+#ifndef NDEBUG
+            metrics::GetMetrics().AddUsage("KP", rep_->options.kp_cache->TotalCharge());
+#endif
           }
         }
       }

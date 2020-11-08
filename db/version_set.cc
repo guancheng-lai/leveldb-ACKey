@@ -18,7 +18,7 @@
 #include "table/two_level_iterator.h"
 #include "util/coding.h"
 #include "util/logging.h"
-#include "util/SimpleMetrics.hpp"
+#include "util/metrics.hpp"
 
 namespace leveldb {
 
@@ -423,11 +423,15 @@ Status Version::Get(const ReadOptions& options, const LookupKey& k,
       int save_result = SaveValue(&state.saver, state.ikey, *cache_res);
       kv_cache->Release(cache_handle);
       if (save_result == 1) {
-        SimpleMetrics::GetMetrics().AddProperty("KV", "HIT");
+#ifndef NDEBUG
+        metrics::GetMetrics().AddCount("KV", "HIT");
+#endif
         return Status::OK();
       }
     } else {
-        SimpleMetrics::GetMetrics().AddProperty("KV", "MISS");
+#ifndef NDEBUG
+      metrics::GetMetrics().AddCount("KV", "MISS");
+#endif
     }
   }
   Cache *kp_cache = state.vset->options_->kp_cache;
@@ -440,12 +444,16 @@ Status Version::Get(const ReadOptions& options, const LookupKey& k,
       KeyPointer* keyPointer = reinterpret_cast<KeyPointer*>(kp_cache->Value(cache_handle));
       Status s = vset_->table_cache_->Get(options, keyPointer->fileNumber, keyPointer->fileSize, state.ikey, &state.saver, state.warm, SaveValue);
       if (s.ok()) {
-        SimpleMetrics::GetMetrics().AddProperty("KP", "HIT");
+#ifndef NDEBUG
+        metrics::GetMetrics().AddCount("KP", "HIT");
+#endif
         return s;
       }
-      SimpleMetrics::GetMetrics().AddProperty("KP", "FAULT");
+#ifndef NDEBUG
+      metrics::GetMetrics().AddCount("KP", "FAULT");
     } else {
-      SimpleMetrics::GetMetrics().AddProperty("KP", "MISS");
+      metrics::GetMetrics().AddCount("KP", "MISS");
+#endif
     }
   }
 
