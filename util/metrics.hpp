@@ -45,8 +45,7 @@ private:
 
     std::chrono::duration<float> elapsed_seconds = end - start;
     std::time_t end_time = std::chrono::system_clock::to_time_t(end);
-
-    fs = std::fstream("metrics.txt", std::fstream::app);
+    fs.open("metrics.txt", std::fstream::app);
     if (!fs.good()) {
       std::cout << "Failed to open metrics.txt" << std::endl;
       return;
@@ -63,6 +62,8 @@ private:
 
     for (const auto& it : cacheActivityCount) {
       std::string cacheType = it.first;
+      std::string cacheTypeGhost = "GHOST_" + it.first;
+      std::string cacheTypeReal = "REAL_" + it.first;
       uint64_t totalActivityCount = 0;
       for (const auto& activity : it.second) {
         totalActivityCount += activity.second;
@@ -71,7 +72,12 @@ private:
       for (const auto& activity : it.second) {
         fs << activity.first << " rate = " << activity.second / static_cast<double>(totalActivityCount) << std::endl;
       }
-      fs << "Avg usage = " << cacheAvgUsage[cacheType].first / static_cast<double>(cacheAvgUsage[cacheType].second) << std::endl;
+      fs << "Total Avg usage: " << cacheAvgUsage[cacheType].first << "/" << static_cast<double>(cacheAvgUsage[cacheType].second) << " = "
+          << cacheAvgUsage[cacheType].first / static_cast<double>(cacheAvgUsage[cacheType].second) << std::endl;
+      fs << "Ghost Avg usage: " << cacheAvgUsage[cacheTypeGhost].first << "/" << static_cast<double>(cacheAvgUsage[cacheTypeGhost].second) << " = "
+          << cacheAvgUsage[cacheTypeGhost].first / static_cast<double>(cacheAvgUsage[cacheTypeGhost].second) << std::endl;
+      fs << "Real Avg usage: " << cacheAvgUsage[cacheTypeReal].first << "/" << static_cast<double>(cacheAvgUsage[cacheTypeReal].second) << " = "
+        << cacheAvgUsage[cacheTypeReal].first / static_cast<double>(cacheAvgUsage[cacheTypeReal].second) << std::endl;
       fs << "--------------" << cacheType << "--------------\n";
     }
 
