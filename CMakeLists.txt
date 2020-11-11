@@ -39,7 +39,8 @@ check_include_file("unistd.h" HAVE_UNISTD_H)
 
 include(CheckLibraryExists)
 check_library_exists(crc32c crc32c_value "" HAVE_CRC32C)
-check_library_exists(snappy snappy_compress "" HAVE_SNAPPY)
+#check_library_exists(snappy snappy_compress "" HAVE_SNAPPY)
+set(HAVE_SNAPPY true)
 check_library_exists(tcmalloc malloc "" HAVE_TCMALLOC)
 
 include(CheckCXXSymbolExists)
@@ -234,6 +235,7 @@ target_include_directories(leveldb
   PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+    /usr/local/include
 )
 
 set_target_properties(leveldb
@@ -271,6 +273,7 @@ if(HAVE_CRC32C)
   target_link_libraries(leveldb crc32c)
 endif(HAVE_CRC32C)
 if(HAVE_SNAPPY)
+  link_directories(/usr/local/lib)
   target_link_libraries(leveldb snappy)
 endif(HAVE_SNAPPY)
 if(HAVE_TCMALLOC)
