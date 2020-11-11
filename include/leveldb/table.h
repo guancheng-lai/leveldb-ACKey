@@ -20,6 +20,13 @@ class RandomAccessFile;
 struct ReadOptions;
 class TableCache;
 
+struct KeyPointer {
+  int fileNumber;
+  int fileSize;
+  KeyPointer(int fn, int fsz) : fileNumber(fn), fileSize(fsz) {}
+  ~KeyPointer() = default;
+};
+
 // A Table is a sorted map from strings to strings.  Tables are
 // immutable and persistent.  A Table may be safely accessed from
 // multiple threads without external synchronization.
@@ -70,7 +77,8 @@ class LEVELDB_EXPORT Table {
   // to Seek(key).  May not make such a call if filter policy says
   // that key is not present.
   Status InternalGet(const ReadOptions&, const Slice& key, void* arg,
-                     void (*handle_result)(void* arg, const Slice& k,
+                     KeyPointer *keyPointer, bool warm,
+                     int (*handle_result)(void* arg, const Slice& k,
                                            const Slice& v));
 
   void ReadMeta(const Footer& footer);

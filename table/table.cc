@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 
+#include <util/metrics.hpp>
 #include "leveldb/table.h"
 
 #include "leveldb/cache.h"
@@ -172,14 +173,23 @@ Iterator* Table::BlockReader(void* arg, const ReadOptions& options,
       Slice key(cache_key_buffer, sizeof(cache_key_buffer));
       cache_handle = block_cache->Lookup(key);
       if (cache_handle != nullptr) {
+#ifndef NDEBUG
+        metrics::GetMetrics().AddCount("BLOCK", "HIT");
+#endif
         block = reinterpret_cast<Block*>(block_cache->Value(cache_handle));
       } else {
+#ifndef NDEBUG
+        metrics::GetMetrics().AddCount("BLOCK", "MISS");
+#endif
         s = ReadBlock(table->rep_->file, options, handle, &contents);
         if (s.ok()) {
           block = new Block(contents);
           if (contents.cachable && options.fill_cache) {
             cache_handle = block_cache->Insert(key, block, block->size(),
                                                &DeleteCachedBlock);
+#ifndef NDEBUG
+            metrics::GetMetrics().AddUsage("BK", block_cache->TotalCharge());
+#endif
           }
         }
       }
@@ -212,7 +222,8 @@ Iterator* Table::NewIterator(const ReadOptions& options) const {
 }
 
 Status Table::InternalGet(const ReadOptions& options, const Slice& k, void* arg,
-                          void (*handle_result)(void*, const Slice&,
+                          KeyPointer *keyPointer, bool warm,
+                          int (*handle_result)(void*, const Slice&,
                                                 const Slice&)) {
   Status s;
   Iterator* iiter = rep_->index_block->NewIterator(rep_->options.comparator);
@@ -228,15 +239,38 @@ Status Table::InternalGet(const ReadOptions& options, const Slice& k, void* arg,
       Iterator* block_iter = BlockReader(this, options, iiter->value());
       block_iter->Seek(k);
       if (block_iter->Valid()) {
-        (*handle_result)(arg, block_iter->key(), block_iter->value());
-
-        // Insert KP(Cold), KV(Warm)
-
-        Slice* valInsert = new Slice(block_iter->value());
-        Cache::Handle* hd = rep_->options.kv_cache->Insert(block_iter->key(), valInsert, valInsert->size(),
-          [](const Slice& key, void* value) { delete reinterpret_cast<Slice*>(value); }
-        );
-        ReleaseBlock(rep_->options.kv_cache, hd);
+        int saveResult = (*handle_result)(arg, block_iter->key(), block_iter->value());
+        if (saveResult == 1) {
+          if (warm) {
+            // Insert into KV
+            size_t sz = block_iter->value().size();
+            char *chr = new char[sz];
+            memcpy(chr, block_iter->value().data(), sz);
+            Slice* valInsert = new Slice(chr, sz);
+            Cache::Handle* hd = rep_->options.kv_cache->Insert(
+              k,
+              valInsert,
+              valInsert->size(),
+              [](const Slice& key, void* value) { delete reinterpret_cast<Slice*>(value); }
+            );
+            ReleaseBlock(rep_->options.kv_cache, hd);
+#ifndef NDEBUG
+            metrics::GetMetrics().AddUsage("KV", rep_->options.kv_cache->TotalCharge());
+#endif
+          } else {
+            // Insert into KP
+            Cache::Handle* hd = rep_->options.kp_cache->Insert(
+              k,
+              keyPointer,
+              sizeof(KeyPointer),
+              [](const Slice& key, void* value) { delete reinterpret_cast<KeyPointer*>(value); }
+            );
+            ReleaseBlock(rep_->options.kp_cache, hd);
+#ifndef NDEBUG
+            metrics::GetMetrics().AddUsage("KP", rep_->options.kp_cache->TotalCharge());
+#endif
+          }
+        }
       }
       s = block_iter->status();
       delete block_iter;

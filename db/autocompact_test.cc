@@ -17,7 +17,9 @@ class AutoCompactTest : public testing::Test {
     tiny_cache_ = NewLRUCache(100);
     options_.block_cache = tiny_cache_;
     tiny_kv_cache_ = NewLRUCache(100);
+    tiny_kp_cache_ = NewLRUCache(100);
     options_.kv_cache = tiny_kv_cache_;
+    options_.kp_cache = tiny_kp_cache_;
     DestroyDB(dbname_, options_);
     options_.create_if_missing = true;
     options_.compression = kNoCompression;
@@ -49,6 +51,7 @@ class AutoCompactTest : public testing::Test {
   std::string dbname_;
   Cache* tiny_cache_;
   Cache* tiny_kv_cache_;
+  Cache* tiny_kp_cache_;
   Options options_;
   DB* db_;
 };

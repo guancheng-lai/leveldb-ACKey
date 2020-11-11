@@ -18,6 +18,7 @@
 #include "table/two_level_iterator.h"
 #include "util/coding.h"
 #include "util/logging.h"
+#include "util/metrics.hpp"
 
 namespace leveldb {
 
@@ -259,7 +260,11 @@ struct Saver {
   std::string* value;
 };
 }  // namespace
-static void SaveValue(void* arg, const Slice& ikey, const Slice& v) {
+// 0 -> kNotFound
+// 1 -> kFound
+// 2 -> kDeleted
+// 3 -> kCorrupt
+static int SaveValue(void* arg, const Slice& ikey, const Slice& v) {
   Saver* s = reinterpret_cast<Saver*>(arg);
   ParsedInternalKey parsed_key;
   if (!ParseInternalKey(ikey, &parsed_key)) {
@@ -271,6 +276,19 @@ static void SaveValue(void* arg, const Slice& ikey, const Slice& v) {
         s->value->assign(v.data(), v.size());
       }
     }
+  }
+
+  switch (s->state) {
+    case kNotFound:
+      return 0;  // Keep searching in other files
+    case kFound:
+      return 1;
+    case kDeleted:
+      return 2;
+    case kCorrupt:
+      return 3;
+    default:
+      return -1;
   }
 }
 
@@ -337,6 +355,7 @@ Status Version::Get(const ReadOptions& options, const LookupKey& k,
     VersionSet* vset;
     Status s;
     bool found;
+    bool warm;
 
     static bool Match(void* arg, int level, FileMetaData* f) {
       State* state = reinterpret_cast<State*>(arg);
@@ -353,7 +372,7 @@ Status Version::Get(const ReadOptions& options, const LookupKey& k,
 
       state->s = state->vset->table_cache_->Get(*state->options, f->number,
                                                 f->file_size, state->ikey,
-                                                &state->saver, SaveValue);
+                                                &state->saver, state->warm, SaveValue);
       if (!state->s.ok()) {
         state->found = true;
         return false;
@@ -381,6 +400,7 @@ Status Version::Get(const ReadOptions& options, const LookupKey& k,
 
   State state;
   state.found = false;
+  state.warm = false;
   state.stats = stats;
   state.last_file_read = nullptr;
   state.last_file_read_level = -1;
@@ -399,19 +419,43 @@ Status Version::Get(const ReadOptions& options, const LookupKey& k,
     Cache::Handle* cache_handle = nullptr;
     cache_handle = kv_cache->Lookup(state.ikey);
     if (cache_handle != nullptr) {
+      Slice *cache_res = reinterpret_cast<Slice *>(kv_cache->Value(cache_handle));
+      int save_result = SaveValue(&state.saver, state.ikey, *cache_res);
       kv_cache->Release(cache_handle);
-      Slice *res = reinterpret_cast<Slice*>(reinterpret_cast<LRUHandle*>(cache_handle)->value);
-      SaveValue(&state.saver, state.ikey, *res);
-      state.found = true;
-      return state.s;
+      if (save_result == 1) {
+#ifndef NDEBUG
+        metrics::GetMetrics().AddCount("KV", "HIT");
+#endif
+        return Status::OK();
+      }
+    } else {
+#ifndef NDEBUG
+      metrics::GetMetrics().AddCount("KV", "MISS");
+#endif
     }
   }
-
-  // Lookup kp
-  // True -> Remove kp, insert kv
-  // False -> Mark warm key, overlapping, -> GetResult
-  //    Warm -> Insert kv
-  //    Cold -> Insert kp
+  Cache *kp_cache = state.vset->options_->kp_cache;
+  if (kp_cache != nullptr) {
+    Cache::Handle* cache_handle = nullptr;
+    cache_handle = kp_cache->Lookup(state.ikey);
+    if (cache_handle != nullptr) {
+      kp_cache->Release(cache_handle);
+      state.warm = true;
+      KeyPointer* keyPointer = reinterpret_cast<KeyPointer*>(kp_cache->Value(cache_handle));
+      Status s = vset_->table_cache_->Get(options, keyPointer->fileNumber, keyPointer->fileSize, state.ikey, &state.saver, state.warm, SaveValue);
+      if (s.ok()) {
+#ifndef NDEBUG
+        metrics::GetMetrics().AddCount("KP", "HIT");
+#endif
+        return s;
+      }
+#ifndef NDEBUG
+      metrics::GetMetrics().AddCount("KP", "FAULT");
+    } else {
+      metrics::GetMetrics().AddCount("KP", "MISS");
+#endif
+    }
+  }
 
   ForEachOverlapping(state.saver.user_key, state.ikey, &state, &State::Match);
 
