@@ -22,6 +22,7 @@
 
 #include "leveldb/export.h"
 #include "leveldb/slice.h"
+#include "port/port.h"
 
 namespace leveldb {
 
@@ -83,7 +84,7 @@ class LEVELDB_EXPORT Cache {
   virtual Handle* Insert(const Slice& key, void* value, size_t charge,
                          void (*deleter)(const Slice& key, void* value)) = 0;
   // Like Insert(), but it will move entries into ghost cache if usage exceed the capacity
-  virtual Handle* InsertARC(const Slice& key, void* value, size_t charge, Cache* ghost,
+  virtual Handle* InsertARC(const Slice& key, void* value, size_t charge, void* ghost,
                             void (*deleter)(const Slice&, void*)) { return Insert(key, value, charge, deleter); }
 
   // If the cache has no mapping for "key", returns nullptr.
@@ -140,12 +141,45 @@ class LEVELDB_EXPORT Cache {
   Rep* rep_;
 };
 
+// We provide our own simple hash table since it removes a whole bunch
+// of porting hacks and is also faster than some of the built-in hash
+// table implementations in some of the compiler/runtime combinations
+// we have tested.  E.g., readrandom speeds up by ~5% over the g++
+// 4.4.3's builtin hashtable.
+class LEVELDB_EXPORT HandleTable {
+public:
+  HandleTable() : length_(0), elems_(0), charge(0), list_(nullptr) { Resize(); }
+  ~HandleTable() { delete[] list_; }
+  LRUHandle *Lookup(const Slice &key, uint32_t hash);
+  LRUHandle *Insert(LRUHandle *h);
+  LRUHandle *InsertGhost(const Slice &key, void *value, void (*deleter)(const Slice &key, void *value));
+  LRUHandle *Remove(const Slice &key, uint32_t hash);
+  size_t TotalCharge() const { return charge; }
+
+private:
+  // The table consists of an array of buckets where each bucket is
+  // a linked list of cache entries that hash into the bucket.
+  mutable leveldb::port::Mutex mutex_;
+  uint32_t length_;
+  uint32_t elems_;
+  LRUHandle **list_;
+  uint32_t charge;
+
+  // Return a pointer to slot that points to a cache entry that
+  // matches key/hash.  If there is no such cache entry, return a
+  // pointer to the trailing slot in the corresponding linked list.
+  LRUHandle **FindPointer(const Slice &key, uint32_t hash);
+
+  void Resize();
+};
+
 class LEVELDB_EXPORT AdaptiveCache : public Cache {
  private:
-  Cache *real, *ghost;
+  Cache *real;
+  HandleTable* ghost;
  public:
   AdaptiveCache() = delete;
-  explicit AdaptiveCache(size_t capacity) : real(NewLRUCache(capacity/2)), ghost(NewLRUCache(capacity/2)) {}
+  explicit AdaptiveCache(size_t capacity) : real(NewLRUCache(capacity)), ghost(new HandleTable()) {}
   ~AdaptiveCache() { delete real, delete ghost; }
   Cache::Handle* Lookup(const Slice& key, int &ghostHit);
   Cache::Handle* Insert(const Slice& key, void* value, size_t charge, void (*deleter)(const Slice&, void*)) override;
@@ -160,7 +194,7 @@ class LEVELDB_EXPORT AdaptiveCache : public Cache {
   size_t TotalGhostCharge() const;
   void AdjustCapacity(size_t size) override;
   Cache* realCache() const;
-  Cache* ghostCache() const;
+  HandleTable* ghostCache() const;
 };
 
 class LEVELDB_EXPORT BlockCache : public Cache {

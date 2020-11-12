@@ -8,7 +8,6 @@
 #include <cstdio>
 #include <cstdlib>
 
-#include "port/port.h"
 #include "port/thread_annotations.h"
 #include "util/hash.h"
 #include "util/mutexlock.h"
@@ -16,8 +15,6 @@
 namespace leveldb {
 
 Cache::~Cache() {}
-
-namespace {
 
 // LRU cache implementation
 //
@@ -46,22 +43,19 @@ namespace {
 // table implementations in some of the compiler/runtime combinations
 // we have tested.  E.g., readrandom speeds up by ~5% over the g++
 // 4.4.3's builtin hashtable.
-class HandleTable {
- public:
-  HandleTable() : length_(0), elems_(0), list_(nullptr) { Resize(); }
-  ~HandleTable() { delete[] list_; }
-
-  LRUHandle* Lookup(const Slice& key, uint32_t hash) {
+  LRUHandle* HandleTable::Lookup(const Slice& key, uint32_t hash) {
     return *FindPointer(key, hash);
   }
 
-  LRUHandle* Insert(LRUHandle* h) {
+  LRUHandle* HandleTable::Insert(LRUHandle* h) {
+    MutexLock l(&mutex_);
     LRUHandle** ptr = FindPointer(h->key(), h->hash);
     LRUHandle* old = *ptr;
     h->next_hash = (old == nullptr ? nullptr : old->next_hash);
     *ptr = h;
     if (old == nullptr) {
       ++elems_;
+      charge += sizeof(LRUHandle) + 4 + h->key_length;
       if (elems_ > length_) {
         // Since each cache entry is fairly large, we aim for a small
         // average linked list length (<= 1).
@@ -71,27 +65,30 @@ class HandleTable {
     return old;
   }
 
-  LRUHandle* Remove(const Slice& key, uint32_t hash) {
+  LRUHandle* HandleTable::Remove(const Slice& key, uint32_t hash) {
+    MutexLock l(&mutex_);
     LRUHandle** ptr = FindPointer(key, hash);
     LRUHandle* result = *ptr;
     if (result != nullptr) {
       *ptr = result->next_hash;
       --elems_;
+      charge -= (sizeof(LRUHandle) + 4 + result->key_length);
     }
     return result;
   }
 
- private:
-  // The table consists of an array of buckets where each bucket is
-  // a linked list of cache entries that hash into the bucket.
-  uint32_t length_;
-  uint32_t elems_;
-  LRUHandle** list_;
+  LRUHandle* HandleTable::InsertGhost(const Slice& key, void* value, void (*deleter)(const Slice& key, void* value)) {
+    LRUHandle* e = reinterpret_cast<LRUHandle*>(malloc(sizeof(LRUHandle) - 1 + key.size()));
+    e->value = value;
+    e->deleter = deleter;
+    e->key_length = key.size();
+    e->next = nullptr;
+    e->hash = Hash(key.data(), key.size(), 0);
+    std::memcpy(e->key_data, key.data(), key.size());
+    return HandleTable::Insert(e);
+  }
 
-  // Return a pointer to slot that points to a cache entry that
-  // matches key/hash.  If there is no such cache entry, return a
-  // pointer to the trailing slot in the corresponding linked list.
-  LRUHandle** FindPointer(const Slice& key, uint32_t hash) {
+  LRUHandle** HandleTable::FindPointer(const Slice& key, uint32_t hash) {
     LRUHandle** ptr = &list_[hash & (length_ - 1)];
     while (*ptr != nullptr && ((*ptr)->hash != hash || key != (*ptr)->key())) {
       ptr = &(*ptr)->next_hash;
@@ -99,7 +96,7 @@ class HandleTable {
     return ptr;
   }
 
-  void Resize() {
+  void HandleTable::Resize() {
     uint32_t new_length = 4;
     while (new_length < elems_) {
       new_length *= 2;
@@ -124,7 +121,6 @@ class HandleTable {
     list_ = new_list;
     length_ = new_length;
   }
-};
 
 // A single shard of sharded cache.
 class LRUCache {
@@ -142,7 +138,7 @@ class LRUCache {
                         void (*deleter)(const Slice& key, void* value));
 
   // Like Cache methods, but with extra "hash" and "ghostCache" parameters.
-  Cache::Handle* Insert(const Slice& key, uint32_t hash, void* value, size_t charge, Cache* ghost,
+  Cache::Handle* Insert(const Slice& key, uint32_t hash, void* value, size_t charge, HandleTable* ghost,
                         void (*deleter)(const Slice &, void*));
 
   Cache::Handle* Lookup(const Slice& key, uint32_t hash);
@@ -288,7 +284,7 @@ Cache::Handle* LRUCache::Insert(const Slice& key, uint32_t hash, void* value,
   return reinterpret_cast<Cache::Handle*>(e);
 }
 
-Cache::Handle* LRUCache::Insert(const Slice& key, uint32_t hash, void* value, size_t charge, Cache* ghost,
+Cache::Handle* LRUCache::Insert(const Slice& key, uint32_t hash, void* value, size_t charge, HandleTable* ghost,
                                  void (*deleter)(const Slice&, void*)) {
   MutexLock l(&mutex_);
 
@@ -320,10 +316,7 @@ Cache::Handle* LRUCache::Insert(const Slice& key, uint32_t hash, void* value, si
     char* buffer = new char[sz+1];
     std::memcpy(buffer, old->key_data, sz);
     std::string ghostKey(&buffer[0], &buffer[0] + sz);
-    auto* hd = ghost->Insert(ghostKey, metadata, sizeof(int),
-     [](const Slice& key, void* value) { delete reinterpret_cast<int*>(value); }
-    );
-    ghost->Release(hd);
+    ghost->InsertGhost(ghostKey, metadata, [](const Slice& key, void* value) { delete reinterpret_cast<int*>(value); });
     assert(old->refs == 1);
     bool erased = FinishErase(table_.Remove(old->key(), old->hash));
     if (!erased) {  // to avoid unused variable when compiled NDEBUG
@@ -392,10 +385,10 @@ class ShardedLRUCache : public Cache {
     const uint32_t hash = HashSlice(key);
     return shard_[Shard(hash)].Insert(key, hash, value, charge, deleter);
   }
-  Handle* InsertARC(const Slice& key, void* value, size_t charge, Cache* ghost,
+  Handle* InsertARC(const Slice& key, void* value, size_t charge, void* ghost,
                     void (*deleter)(const Slice&, void*)) override {
     const uint32_t hash = HashSlice(key);
-    return shard_[Shard(hash)].Insert(key, hash, value, charge, ghost, deleter);
+    return shard_[Shard(hash)].Insert(key, hash, value, charge, reinterpret_cast<HandleTable*>(ghost), deleter);
   }
   Handle* Lookup(const Slice& key) override {
     const uint32_t hash = HashSlice(key);
@@ -435,8 +428,6 @@ class ShardedLRUCache : public Cache {
   }
 };
 
-}  // end anonymous namespace
-
 // AdaptiveCache
 Cache::Handle* AdaptiveCache::Insert(const Slice& key, void* value, size_t charge, void (*deleter)(const Slice&, void*)) {
   assert(ghost);
@@ -447,11 +438,13 @@ Cache::Handle* AdaptiveCache::Lookup(const Slice& key, int& ghostHit) {
   if (handle != nullptr) {
     return handle;
   }
-
-  handle = ghost->Lookup(key);
-  if (handle != nullptr) {
-    ghostHit = *reinterpret_cast<int*>(ghost->Value(handle));
-    ghost->Release(handle);
+  uint32_t hash = Hash(key.data(), key.size(), 0);
+  LRUHandle* ghostHandle = ghost->Lookup(key, hash);
+  if (ghostHandle != nullptr) {
+    ghostHit = *reinterpret_cast<int*>(ghostHandle->value);
+    ghostHandle = ghost->Remove(key, hash);
+    ghostHandle->deleter(ghostHandle->key(), ghostHandle->value);
+    delete ghostHandle;
   }
   return nullptr;
 }
@@ -489,7 +482,7 @@ void AdaptiveCache::Prune() {
 Cache* AdaptiveCache::realCache() const {
   return real;
 }
-Cache* AdaptiveCache::ghostCache() const {
+HandleTable* AdaptiveCache::ghostCache() const {
   return ghost;
 }
 // AdaptiveCache
