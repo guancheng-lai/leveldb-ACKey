@@ -145,12 +145,6 @@ class LRUCache {
   Cache::Handle* Insert(const Slice& key, uint32_t hash, void* value, size_t charge, Cache* ghost,
                         void (*deleter)(const Slice &, void*));
 
-//
-//  Reserve for future development
-//  Cache::Handle* InsertGhost(const Slice& key, void* value, size_t charge,
-//                        void (*deleter)(const Slice& key, void* value));
-//
-
   Cache::Handle* Lookup(const Slice& key, uint32_t hash);
   void Release(Cache::Handle* handle);
   void Erase(const Slice& key, uint32_t hash);
@@ -403,25 +397,10 @@ class ShardedLRUCache : public Cache {
     const uint32_t hash = HashSlice(key);
     return shard_[Shard(hash)].Insert(key, hash, value, charge, ghost, deleter);
   }
-//
-//  Reserve for future development
-//  Handle* InsertGhost(const Slice& key, void* value, size_t charge,
-//                 void (*deleter)(const Slice& key, void* value)) override {
-//    const uint32_t hash = HashSlice(key);
-//    return shard_[Shard(hash)].Insert(key, hash >> 16, value, charge, deleter);
-//  }
-//
   Handle* Lookup(const Slice& key) override {
     const uint32_t hash = HashSlice(key);
     return shard_[Shard(hash)].Lookup(key, hash);
   }
-//
-//  Reserve for future development
-//  Handle* LookupGhost(const Slice& key) override {
-//    const uint32_t hash = (HashSlice(key) >> 16);
-//    return shard_[Shard(hash)].Lookup(Slice(), hash);
-//  }
-//
   void Release(Handle* handle) override {
     LRUHandle* h = reinterpret_cast<LRUHandle*>(handle);
     shard_[Shard(h->hash)].Release(handle);
@@ -479,14 +458,8 @@ Cache::Handle* AdaptiveCache::Lookup(const Slice& key, int& ghostHit) {
 void AdaptiveCache::Release(Cache::Handle* handle) {
   real->Release(handle);
 }
-void AdaptiveCache::ReleaseGhost(Cache::Handle* handle) {
-  ghost->Release(handle);
-}
 void* AdaptiveCache::Value(Cache::Handle* handle) {
   return real->Value(handle);
-}
-void* AdaptiveCache::ValueGhost(Cache::Handle* handle) {
-  return ghost->Value(handle);
 }
 uint64_t AdaptiveCache::NewId() {
   return real->NewId();
@@ -505,15 +478,13 @@ void AdaptiveCache::AdjustCapacity(size_t size) {
 }
 Cache::Handle* AdaptiveCache::Lookup(const Slice& key) {
   assert(false);
-  return real->Lookup(key);
+  return nullptr;
 }
 void AdaptiveCache::Erase(const Slice& key) {
   assert(false);
-  real->Erase(key);
 }
 void AdaptiveCache::Prune() {
   assert(false);
-  real->Prune();
 }
 Cache* AdaptiveCache::realCache() const {
   return real;
@@ -532,9 +503,6 @@ Cache::Handle* BlockCache::Lookup(const Slice& key, int& ghostHit) {
 }
 void* BlockCache::Value(Cache::Handle* handle) {
   return bk->Value(handle);
-}
-void* BlockCache::ValueGhost(Cache::Handle* handle) {
-  return bk->ValueGhost(handle);
 }
 uint64_t BlockCache::NewId() {
   return bk->NewId();
@@ -593,23 +561,11 @@ void* PointCache::ValueKV(Cache::Handle* handle) {
 void* PointCache::ValueKP(Cache::Handle* handle) {
   return kp->Value(handle);
 }
-void* PointCache::ValueGhostKV(Cache::Handle* handle) {
-  return kv->ghostCache()->Value(handle);
-}
-void* PointCache::ValueGhostKP(Cache::Handle* handle) {
-  return kp->ghostCache()->Value(handle);
-}
 void PointCache::ReleaseKV(Cache::Handle* handle) {
   kv->Release(handle);
 }
 void PointCache::ReleaseKP(Cache::Handle* handle) {
   kp->Release(handle);
-}
-void PointCache::ReleaseGhostKV(Cache::Handle* handle) {
-  kv->ReleaseGhost(handle);
-}
-void PointCache::ReleaseGhostKP(Cache::Handle* handle) {
-  kp->ReleaseGhost(handle);
 }
 void PointCache::AdjustPointCacheCapacity(size_t adjustment) {
   double ratio = static_cast<double>(TotalKvCharge()) / static_cast<double>(TotalKpCharge());

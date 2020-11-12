@@ -85,11 +85,6 @@ class LEVELDB_EXPORT Cache {
   // Like Insert(), but it will move entries into ghost cache if usage exceed the capacity
   virtual Handle* InsertARC(const Slice& key, void* value, size_t charge, Cache* ghost,
                             void (*deleter)(const Slice&, void*)) { return Insert(key, value, charge, deleter); }
-  //
-  //Reserve for future development
-  //virtual Handle* InsertGhost(const Slice& key, void* value, size_t charge,
-  //                            void (*deleter)(const Slice& key, void* value)) { return Insert(key, value, charge, deleter); }
-  //
 
   // If the cache has no mapping for "key", returns nullptr.
   //
@@ -155,9 +150,7 @@ class LEVELDB_EXPORT AdaptiveCache : public Cache {
   Cache::Handle* Lookup(const Slice& key, int &ghostHit);
   Cache::Handle* Insert(const Slice& key, void* value, size_t charge, void (*deleter)(const Slice&, void*)) override;
   void Release(Cache::Handle* handle) override;
-  void ReleaseGhost(Cache::Handle* handle);
   void* Value(Cache::Handle* handle) override;
-  void* ValueGhost(Cache::Handle* handle);
   Handle* Lookup(const Slice& key) override;
   void Erase(const Slice& key) override;
   void Prune() override;
@@ -183,7 +176,6 @@ class LEVELDB_EXPORT BlockCache : public Cache {
   void Release(Handle* handle);
   void Erase(const Slice& key);
   void* Value(Cache::Handle* handle);
-  void* ValueGhost(Cache::Handle* handle);
   uint64_t NewId();
   size_t TotalCharge() const;
   size_t TotalRealCharge() const;
@@ -204,12 +196,8 @@ class LEVELDB_EXPORT PointCache {
   Cache::Handle* LookupKP(const Slice& key, int& ghostHit);
   void* ValueKV(Cache::Handle* handle);
   void* ValueKP(Cache::Handle* handle);
-  void* ValueGhostKV(Cache::Handle* handle);
-  void* ValueGhostKP(Cache::Handle* handle);
   void ReleaseKV(Cache::Handle* handle);
   void ReleaseKP(Cache::Handle* handle);
-  void ReleaseGhostKV(Cache::Handle* handle);
-  void ReleaseGhostKP(Cache::Handle* handle);
   void AdjustPointCacheCapacity(size_t adjustment);
   void AdjustKVCapacity(size_t adjustment);
   void AdjustKPCapacity(size_t adjustment);
