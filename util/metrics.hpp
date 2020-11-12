@@ -26,8 +26,15 @@ public:
     cacheActivityCount[cacheType][activity]++;
   }
 
+  void AddRandomActivity(const std::string& activity)  {
+    activityCount[activity]++;
+  }
+
   void AddUsage(const std::string& p, double usage) {
-    cacheAvgUsage[p].first += usage / static_cast<double>(property["Cache Size"]);
+    if (usage > 0) {
+      cacheAvgUsage[p].first += usage / static_cast<double>(property["Cache Size"]);
+    }
+
     cacheAvgUsage[p].second++;
   }
 
@@ -81,10 +88,15 @@ private:
       fs << "--------------" << cacheType << "--------------\n";
     }
 
+    for (const auto & it : activityCount) {
+      fs << it.first << " - " << it.second << std::endl;
+    }
+
     fs << "\n---------------------------------------------" << std::endl;
   }
 
   std::fstream fs;
+  std::unordered_map<std::string, uint64_t> activityCount;
   std::unordered_map<std::string, int> property;
   std::unordered_map<std::string, std::unordered_map<std::string, uint64_t>> cacheActivityCount;
   std::unordered_map<std::string, std::pair<double,uint64_t>> cacheAvgUsage;
