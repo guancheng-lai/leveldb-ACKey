@@ -154,7 +154,7 @@ static void ReleaseBlock(void* arg, void* h) {
 Iterator* Table::BlockReader(void* arg, const ReadOptions& options,
                              const Slice& index_value) {
   Table* table = reinterpret_cast<Table*>(arg);
-  Cache* block_cache = table->rep_->options.block_cache;
+  BlockCache* block_cache = table->rep_->options.block_cache;
   Block* block = nullptr;
   Cache::Handle* cache_handle = nullptr;
 
@@ -171,16 +171,27 @@ Iterator* Table::BlockReader(void* arg, const ReadOptions& options,
       EncodeFixed64(cache_key_buffer, table->rep_->cache_id);
       EncodeFixed64(cache_key_buffer + 8, handle.offset());
       Slice key(cache_key_buffer, sizeof(cache_key_buffer));
-      cache_handle = block_cache->Lookup(key);
-      if (cache_handle != nullptr) {
+      int ghost_hit_and_adjust_boundary = 0;
+      cache_handle = block_cache->Lookup(key, ghost_hit_and_adjust_boundary);
+      if (cache_handle != nullptr && ghost_hit_and_adjust_boundary == 0) {
 #ifndef NDEBUG
         metrics::GetMetrics().AddCount("BLOCK", "HIT");
 #endif
         block = reinterpret_cast<Block*>(block_cache->Value(cache_handle));
       } else {
+        if (ghost_hit_and_adjust_boundary > 0) {
+#ifndef NDEBUG
+          metrics::GetMetrics().AddCount("BLOCK", "GHOST");
+#endif
+          if (block_cache->TotalCharge() + table->rep_->options.point_cache->TotalCharge() > table->rep_->options.cache_capacity) {
+            block_cache->AdjustCapacity(ghost_hit_and_adjust_boundary);
+            table->rep_->options.point_cache->AdjustPointCacheCapacity(-ghost_hit_and_adjust_boundary);
+          }
+        } else {
 #ifndef NDEBUG
         metrics::GetMetrics().AddCount("BLOCK", "MISS");
 #endif
+        }
         s = ReadBlock(table->rep_->file, options, handle, &contents);
         if (s.ok()) {
           block = new Block(contents);
@@ -188,7 +199,9 @@ Iterator* Table::BlockReader(void* arg, const ReadOptions& options,
             cache_handle = block_cache->Insert(key, block, block->size(),
                                                &DeleteCachedBlock);
 #ifndef NDEBUG
-            metrics::GetMetrics().AddUsage("BK", block_cache->TotalCharge());
+            metrics::GetMetrics().AddUsage("BLOCK", block_cache->TotalCharge());
+            metrics::GetMetrics().AddUsage("GHOST_BLOCK", block_cache->TotalGhostCharge());
+            metrics::GetMetrics().AddUsage("REAL_BLOCK", block_cache->TotalRealCharge());
 #endif
           }
         }
@@ -241,33 +254,32 @@ Status Table::InternalGet(const ReadOptions& options, const Slice& k, void* arg,
       if (block_iter->Valid()) {
         int saveResult = (*handle_result)(arg, block_iter->key(), block_iter->value());
         if (saveResult == 1) {
+          PointCache* point_cache = rep_->options.point_cache;
           if (warm) {
             // Insert into KV
-            size_t sz = block_iter->value().size();
-            char *chr = new char[sz];
-            memcpy(chr, block_iter->value().data(), sz);
-            Slice* valInsert = new Slice(chr, sz);
-            Cache::Handle* hd = rep_->options.kv_cache->Insert(
-              k,
-              valInsert,
-              valInsert->size(),
+            size_t valueSize = block_iter->value().size();
+            char* valueBuffer = new char[valueSize];
+            memcpy(valueBuffer, block_iter->value().data(), valueSize);
+            Slice* valueSlice = new Slice(valueBuffer, valueSize);
+            Cache::Handle* hd = point_cache->InsertKV(k, valueSlice, valueSize,
               [](const Slice& key, void* value) { delete reinterpret_cast<Slice*>(value); }
             );
-            ReleaseBlock(rep_->options.kv_cache, hd);
+            point_cache->ReleaseKV(hd);
 #ifndef NDEBUG
-            metrics::GetMetrics().AddUsage("KV", rep_->options.kv_cache->TotalCharge());
+            metrics::GetMetrics().AddUsage("REAL_KV", point_cache->kvCache()->TotalRealCharge());
+            metrics::GetMetrics().AddUsage("GHOST_KV", point_cache->kvCache()->TotalGhostCharge());
+            metrics::GetMetrics().AddUsage("KV", point_cache->kvCache()->TotalCharge());
 #endif
           } else {
             // Insert into KP
-            Cache::Handle* hd = rep_->options.kp_cache->Insert(
-              k,
-              keyPointer,
-              sizeof(KeyPointer),
+            Cache::Handle* hd = rep_->options.point_cache->InsertKP(k, keyPointer, sizeof(KeyPointer),
               [](const Slice& key, void* value) { delete reinterpret_cast<KeyPointer*>(value); }
             );
-            ReleaseBlock(rep_->options.kp_cache, hd);
+            point_cache->ReleaseKP(hd);
 #ifndef NDEBUG
-            metrics::GetMetrics().AddUsage("KP", rep_->options.kp_cache->TotalCharge());
+            metrics::GetMetrics().AddUsage("REAL_KP", point_cache->kpCache()->TotalRealCharge());
+            metrics::GetMetrics().AddUsage("GHOST_KP", point_cache->kpCache()->TotalGhostCharge());
+            metrics::GetMetrics().AddUsage("KP", point_cache->kvCache()->TotalCharge());
 #endif
           }
         }

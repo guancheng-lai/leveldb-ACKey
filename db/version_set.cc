@@ -414,35 +414,45 @@ Status Version::Get(const ReadOptions& options, const LookupKey& k,
   state.saver.user_key = k.user_key();
   state.saver.value = value;
 
-  Cache *kv_cache = state.vset->options_->kv_cache;
-  if (kv_cache != nullptr) {
+
+  BlockCache* block_cache = state.vset->options_->block_cache;
+  PointCache* point_cache = state.vset->options_->point_cache;
+  int ghost_hit_and_adjust_boundary = 0;
+  if (point_cache != nullptr) {
     Cache::Handle* cache_handle = nullptr;
-    cache_handle = kv_cache->Lookup(state.ikey);
+    cache_handle = point_cache->LookupKV(state.ikey, ghost_hit_and_adjust_boundary);
     if (cache_handle != nullptr) {
-      Slice *cache_res = reinterpret_cast<Slice *>(kv_cache->Value(cache_handle));
+      Slice* cache_res = reinterpret_cast<Slice *>(point_cache->ValueKV(cache_handle));
       int save_result = SaveValue(&state.saver, state.ikey, *cache_res);
-      kv_cache->Release(cache_handle);
+      point_cache->ReleaseKV(cache_handle);
       if (save_result == 1) {
 #ifndef NDEBUG
         metrics::GetMetrics().AddCount("KV", "HIT");
 #endif
         return Status::OK();
       }
-    } else {
+    } else if (ghost_hit_and_adjust_boundary > 0) {
+      state.warm = true;
+      if (point_cache->TotalCharge() + block_cache->TotalCharge() > state.vset->options_->cache_capacity) {
+        point_cache->AdjustKVCapacity(ghost_hit_and_adjust_boundary);
+        point_cache->AdjustKPCapacity(-static_cast<double>(ghost_hit_and_adjust_boundary) / 3.0);
+        block_cache->AdjustCapacity(-static_cast<double>(ghost_hit_and_adjust_boundary * 2) / 3.0);
+      }
 #ifndef NDEBUG
+      metrics::GetMetrics().AddCount("KV", "GHOST");
+    } else {
       metrics::GetMetrics().AddCount("KV", "MISS");
 #endif
     }
   }
-  Cache *kp_cache = state.vset->options_->kp_cache;
-  if (kp_cache != nullptr) {
+  if (point_cache != nullptr && ghost_hit_and_adjust_boundary == 0) {
     Cache::Handle* cache_handle = nullptr;
-    cache_handle = kp_cache->Lookup(state.ikey);
+    cache_handle = point_cache->LookupKP(state.ikey, ghost_hit_and_adjust_boundary);
     if (cache_handle != nullptr) {
-      kp_cache->Release(cache_handle);
       state.warm = true;
-      KeyPointer* keyPointer = reinterpret_cast<KeyPointer*>(kp_cache->Value(cache_handle));
-      Status s = vset_->table_cache_->Get(options, keyPointer->fileNumber, keyPointer->fileSize, state.ikey, &state.saver, state.warm, SaveValue);
+      KeyPointer keyPointer = *reinterpret_cast<KeyPointer*>(point_cache->ValueKP(cache_handle));
+      point_cache->ReleaseKP(cache_handle);
+      Status s = vset_->table_cache_->Get(options, keyPointer.fileNumber, keyPointer.fileSize, state.ikey, &state.saver, state.warm, SaveValue);
       if (s.ok()) {
 #ifndef NDEBUG
         metrics::GetMetrics().AddCount("KP", "HIT");
@@ -451,6 +461,15 @@ Status Version::Get(const ReadOptions& options, const LookupKey& k,
       }
 #ifndef NDEBUG
       metrics::GetMetrics().AddCount("KP", "FAULT");
+#endif
+    } else if (ghost_hit_and_adjust_boundary > 0) {
+      if (point_cache->TotalCharge() + block_cache->TotalCharge() > state.vset->options_->cache_capacity) {
+        point_cache->AdjustKPCapacity(ghost_hit_and_adjust_boundary);
+        point_cache->AdjustKVCapacity(-static_cast<double>(ghost_hit_and_adjust_boundary) / 3.0);
+        block_cache->AdjustCapacity(-static_cast<double>(ghost_hit_and_adjust_boundary * 2) / 3.0);
+      }
+#ifndef NDEBUG
+      metrics::GetMetrics().AddCount("KP", "GHOST");
     } else {
       metrics::GetMetrics().AddCount("KP", "MISS");
 #endif

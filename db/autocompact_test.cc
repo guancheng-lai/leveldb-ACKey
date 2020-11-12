@@ -14,12 +14,10 @@ class AutoCompactTest : public testing::Test {
  public:
   AutoCompactTest() {
     dbname_ = testing::TempDir() + "autocompact_test";
-    tiny_cache_ = NewLRUCache(100);
-    options_.block_cache = tiny_cache_;
-    tiny_kv_cache_ = NewLRUCache(100);
-    tiny_kp_cache_ = NewLRUCache(100);
-    options_.kv_cache = tiny_kv_cache_;
-    options_.kp_cache = tiny_kp_cache_;
+    tiny_block_cache_ = NewBlockCache(100);
+    options_.block_cache = tiny_block_cache_;
+    tiny_point_cache_ = NewPointCache(100);
+    options_.point_cache = tiny_point_cache_;
     DestroyDB(dbname_, options_);
     options_.create_if_missing = true;
     options_.compression = kNoCompression;
@@ -29,7 +27,8 @@ class AutoCompactTest : public testing::Test {
   ~AutoCompactTest() {
     delete db_;
     DestroyDB(dbname_, Options());
-    delete tiny_cache_;
+    delete tiny_block_cache_;
+    delete tiny_point_cache_;
   }
 
   std::string Key(int i) {
@@ -49,9 +48,8 @@ class AutoCompactTest : public testing::Test {
 
  private:
   std::string dbname_;
-  Cache* tiny_cache_;
-  Cache* tiny_kv_cache_;
-  Cache* tiny_kp_cache_;
+  BlockCache* tiny_block_cache_;
+  PointCache* tiny_point_cache_;
   Options options_;
   DB* db_;
 };

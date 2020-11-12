@@ -48,10 +48,14 @@ namespace leveldb {
   };
 
 class LEVELDB_EXPORT Cache;
+class LEVELDB_EXPORT BlockCache;
+class LEVELDB_EXPORT PointCache;
 
 // Create a new cache with a fixed size capacity.  This implementation
 // of Cache uses a least-recently-used eviction policy.
 LEVELDB_EXPORT Cache* NewLRUCache(size_t capacity);
+LEVELDB_EXPORT BlockCache* NewBlockCache(size_t capacity);
+LEVELDB_EXPORT PointCache* NewPointCache(size_t capacity);
 
 class LEVELDB_EXPORT Cache {
  public:
@@ -78,6 +82,14 @@ class LEVELDB_EXPORT Cache {
   // value will be passed to "deleter".
   virtual Handle* Insert(const Slice& key, void* value, size_t charge,
                          void (*deleter)(const Slice& key, void* value)) = 0;
+  // Like Insert(), but it will move entries into ghost cache if usage exceed the capacity
+  virtual Handle* InsertARC(const Slice& key, void* value, size_t charge, Cache* ghost,
+                            void (*deleter)(const Slice&, void*)) { return Insert(key, value, charge, deleter); }
+  //
+  //Reserve for future development
+  //virtual Handle* InsertGhost(const Slice& key, void* value, size_t charge,
+  //                            void (*deleter)(const Slice& key, void* value)) { return Insert(key, value, charge, deleter); }
+  //
 
   // If the cache has no mapping for "key", returns nullptr.
   //
@@ -85,6 +97,8 @@ class LEVELDB_EXPORT Cache {
   // must call this->Release(handle) when the returned mapping is no
   // longer needed.
   virtual Handle* Lookup(const Slice& key) = 0;
+  // Like Lookup(), but it will lookup entries by using shorten hash value
+  virtual Handle* LookupGhost(const Slice& key) { return Lookup(key); };
 
   // Release a mapping returned by a previous Lookup().
   // REQUIRES: handle must not have been released yet.
@@ -119,6 +133,9 @@ class LEVELDB_EXPORT Cache {
   // cache.
   virtual size_t TotalCharge() const = 0;
 
+  // Adjust cache capacity, it could be either expanding or shrinking
+  virtual void AdjustCapacity(size_t capacity) = 0;
+
  private:
   void LRU_Remove(Handle* e);
   void LRU_Append(Handle* e);
@@ -126,6 +143,81 @@ class LEVELDB_EXPORT Cache {
 
   struct Rep;
   Rep* rep_;
+};
+
+class LEVELDB_EXPORT AdaptiveCache : public Cache {
+ private:
+  Cache *real, *ghost;
+ public:
+  AdaptiveCache() = delete;
+  explicit AdaptiveCache(size_t capacity) : real(NewLRUCache(capacity/2)), ghost(NewLRUCache(capacity/2)) {}
+  ~AdaptiveCache() { delete real, delete ghost; }
+  Cache::Handle* Lookup(const Slice& key, int &ghostHit);
+  Cache::Handle* Insert(const Slice& key, void* value, size_t charge, void (*deleter)(const Slice&, void*)) override;
+  void Release(Cache::Handle* handle) override;
+  void ReleaseGhost(Cache::Handle* handle);
+  void* Value(Cache::Handle* handle) override;
+  void* ValueGhost(Cache::Handle* handle);
+  Handle* Lookup(const Slice& key) override;
+  void Erase(const Slice& key) override;
+  void Prune() override;
+  uint64_t NewId() override;
+  size_t TotalCharge() const override;
+  size_t TotalRealCharge() const;
+  size_t TotalGhostCharge() const;
+  void AdjustCapacity(size_t size) override;
+  Cache* realCache() const;
+  Cache* ghostCache() const;
+};
+
+class LEVELDB_EXPORT BlockCache : public Cache {
+ private:
+  AdaptiveCache* bk;
+  size_t adjustment;
+ public:
+  explicit BlockCache(size_t capacity) : bk{new AdaptiveCache(capacity)}, adjustment(0) {}
+  ~BlockCache() { delete bk; }
+  Cache::Handle* Lookup(const Slice& key, int &ghostHit);
+  Cache::Handle* Insert(const Slice& key, void* value, size_t charge, void (*deleter)(const Slice&, void*));
+  Handle* Lookup(const Slice& key);
+  void Release(Handle* handle);
+  void Erase(const Slice& key);
+  void* Value(Cache::Handle* handle);
+  void* ValueGhost(Cache::Handle* handle);
+  uint64_t NewId();
+  size_t TotalCharge() const;
+  size_t TotalRealCharge() const;
+  size_t TotalGhostCharge() const;
+  void AdjustCapacity(size_t adjust);
+};
+
+class LEVELDB_EXPORT PointCache {
+ private:
+  AdaptiveCache* kv;
+  AdaptiveCache* kp;
+ public:
+  explicit PointCache(size_t capacity) : kv{new AdaptiveCache(capacity/2)}, kp{new AdaptiveCache(capacity/2)} {}
+  ~PointCache() { delete kv, delete kp; }
+  Cache::Handle* InsertKV(const Slice& key, void* value, size_t charge, void (*deleter)(const Slice&, void*));
+  Cache::Handle* InsertKP(const Slice& key, void* value, size_t charge, void (*deleter)(const Slice&, void*));
+  Cache::Handle* LookupKV(const Slice& key, int& ghostHit);
+  Cache::Handle* LookupKP(const Slice& key, int& ghostHit);
+  void* ValueKV(Cache::Handle* handle);
+  void* ValueKP(Cache::Handle* handle);
+  void* ValueGhostKV(Cache::Handle* handle);
+  void* ValueGhostKP(Cache::Handle* handle);
+  void ReleaseKV(Cache::Handle* handle);
+  void ReleaseKP(Cache::Handle* handle);
+  void ReleaseGhostKV(Cache::Handle* handle);
+  void ReleaseGhostKP(Cache::Handle* handle);
+  void AdjustPointCacheCapacity(size_t adjustment);
+  void AdjustKVCapacity(size_t adjustment);
+  void AdjustKPCapacity(size_t adjustment);
+  size_t TotalCharge() const;
+  size_t TotalKvCharge() const;
+  size_t TotalKpCharge() const;
+  AdaptiveCache* kvCache() const;
+  AdaptiveCache* kpCache() const;
 };
 
 }  // namespace leveldb

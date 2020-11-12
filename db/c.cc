@@ -66,7 +66,7 @@ struct leveldb_options_t {
   Options rep;
 };
 struct leveldb_cache_t {
-  Cache* rep;
+  leveldb::BlockCache* rep;
 };
 struct leveldb_seqfile_t {
   SequentialFile* rep;
@@ -520,7 +520,7 @@ void leveldb_writeoptions_set_sync(leveldb_writeoptions_t* opt, uint8_t v) {
 
 leveldb_cache_t* leveldb_cache_create_lru(size_t capacity) {
   leveldb_cache_t* c = new leveldb_cache_t;
-  c->rep = NewLRUCache(capacity);
+  c->rep = leveldb::NewBlockCache(capacity);
   return c;
 }
 

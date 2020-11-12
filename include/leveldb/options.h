@@ -11,7 +11,8 @@
 
 namespace leveldb {
 
-class Cache;
+class BlockCache;
+class PointCache;
 class Comparator;
 class Env;
 class FilterPolicy;
@@ -91,9 +92,9 @@ struct LEVELDB_EXPORT Options {
 
   // If non-null, use the specified cache for blocks.
   // If null, leveldb will automatically create and use an 8MB internal cache.
-  Cache* block_cache = nullptr;
-  Cache* kv_cache = nullptr;
-  Cache* kp_cache = nullptr;
+  BlockCache* block_cache = nullptr;
+  PointCache* point_cache = nullptr;
+  size_t cache_capacity = 8 << 20;
 
   // Approximate size of user data packed per block.  Note that the
   // block size specified here corresponds to uncompressed data.  The

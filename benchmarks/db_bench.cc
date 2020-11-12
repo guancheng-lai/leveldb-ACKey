@@ -314,7 +314,9 @@ struct ThreadState {
 
 class Benchmark {
  private:
-  Cache *bk_cache_, *kv_cache_, *kp_cache_;
+  BlockCache* block_cache_;
+  PointCache* point_cache_;
+  int cache_capacity;
   const FilterPolicy* filter_policy_;
   DB* db_;
   int num_;
@@ -404,9 +406,9 @@ class Benchmark {
 
  public:
   Benchmark()
-      : bk_cache_(FLAGS_cache_size >= 0 ? NewLRUCache(FLAGS_cache_size) : nullptr),
-        kv_cache_(FLAGS_cache_size >= 0 ? NewLRUCache(FLAGS_cache_size) : nullptr),
-        kp_cache_(FLAGS_cache_size >= 0 ? NewLRUCache(FLAGS_cache_size) : nullptr),
+      : block_cache_(FLAGS_cache_size >= 0 ? NewBlockCache(FLAGS_cache_size/2) : nullptr),
+        point_cache_(FLAGS_cache_size >= 0 ? NewPointCache(FLAGS_cache_size/2) : nullptr),
+        cache_capacity(FLAGS_cache_size),
         filter_policy_(FLAGS_bloom_bits >= 0
                            ? NewBloomFilterPolicy(FLAGS_bloom_bits)
                            : nullptr),
@@ -430,9 +432,8 @@ class Benchmark {
 
   ~Benchmark() {
     delete db_;
-    delete bk_cache_;
-    delete kv_cache_;
-    delete kp_cache_;
+    delete block_cache_;
+    delete point_cache_;
     delete filter_policy_;
   }
 
@@ -698,9 +699,9 @@ class Benchmark {
     Options options;
     options.env = g_env;
     options.create_if_missing = !FLAGS_use_existing_db;
-    options.block_cache = bk_cache_;
-    options.kv_cache = kv_cache_;
-    options.kp_cache = kp_cache_;
+    options.block_cache = block_cache_;
+    options.point_cache = point_cache_;
+    options.cache_capacity = cache_capacity;
     options.write_buffer_size = FLAGS_write_buffer_size;
     options.max_file_size = FLAGS_max_file_size;
     options.block_size = FLAGS_block_size;
