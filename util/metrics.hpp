@@ -95,7 +95,7 @@ private:
     fs << "\n---------------------------------------------" << std::endl;
   }
 
-  std::fstream fs;
+  std::ofstream fs;
   std::unordered_map<std::string, uint64_t> activityCount;
   std::unordered_map<std::string, int> property;
   std::unordered_map<std::string, std::unordered_map<std::string, uint64_t>> cacheActivityCount;
