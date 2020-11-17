@@ -415,18 +415,37 @@ Status Version::Get(const ReadOptions& options, const LookupKey& k,
   state.saver.value = value;
 
   Cache *kv_cache = state.vset->options_->kv_cache;
+  Cache *kp_cache = state.vset->options_->kp_cache;
+  Cache *block_cache = state.vset->options_->block_cache;
   if (kv_cache != nullptr) {
     Cache::Handle* cache_handle = nullptr;
     cache_handle = kv_cache->Lookup(state.ikey);
     if (cache_handle != nullptr) {
-      Slice *cache_res = reinterpret_cast<Slice *>(kv_cache->Value(cache_handle));
-      int save_result = SaveValue(&state.saver, state.ikey, *cache_res);
-      kv_cache->Release(cache_handle);
-      if (save_result == 1) {
+      LRUHandle* hd = reinterpret_cast<LRUHandle *>(cache_handle);
+      if (!hd->is_ghost) {
+        Slice *cache_res = reinterpret_cast<Slice *>(hd->value);
+        int save_result = SaveValue(&state.saver, state.ikey, *cache_res);
+        kv_cache->Release(cache_handle);
+        if (save_result == 1) {
 #ifndef NDEBUG
-        metrics::GetMetrics().AddCount("KV", "HIT");
+          metrics::GetMetrics().AddCount("KV", "HIT");
 #endif
-        return Status::OK();
+          return Status::OK();
+        }
+      } else {
+#ifndef NDEBUG
+        metrics::GetMetrics().AddCount("KV", "GHOST");
+#endif
+
+        state.warm = true;
+        int charge = hd->charge;
+        kv_cache->Release(cache_handle);
+        kv_cache->Erase(state.ikey);
+        kv_cache->AdjustCapacity(charge);
+
+        double ratio = static_cast<double>(kp_cache->TotalCharge()) / static_cast<double>(block_cache->TotalCharge());
+        kp_cache->AdjustCapacity(-charge * (ratio / (1.0 + ratio)));
+        block_cache->AdjustCapacity(-charge * (1.0 / (1.0 + ratio)));
       }
     } else {
 #ifndef NDEBUG
@@ -434,23 +453,39 @@ Status Version::Get(const ReadOptions& options, const LookupKey& k,
 #endif
     }
   }
-  Cache *kp_cache = state.vset->options_->kp_cache;
   if (kp_cache != nullptr) {
     Cache::Handle* cache_handle = nullptr;
     cache_handle = kp_cache->Lookup(state.ikey);
     if (cache_handle != nullptr) {
-      kp_cache->Release(cache_handle);
-      state.warm = true;
-      KeyPointer* keyPointer = reinterpret_cast<KeyPointer*>(kp_cache->Value(cache_handle));
-      Status s = vset_->table_cache_->Get(options, keyPointer->fileNumber, keyPointer->fileSize, state.ikey, &state.saver, state.warm, SaveValue);
-      if (s.ok()) {
+      LRUHandle* hd = reinterpret_cast<LRUHandle *>(cache_handle);
+      if (!hd->is_ghost) {
+        kp_cache->Release(cache_handle);
+        state.warm = true;
+        KeyPointer *keyPointer = reinterpret_cast<KeyPointer *>(kp_cache->Value(cache_handle));
+        Status s = vset_->table_cache_->Get(options, keyPointer->fileNumber, keyPointer->fileSize, state.ikey,
+                                            &state.saver, state.warm, SaveValue);
+        if (s.ok()) {
 #ifndef NDEBUG
-        metrics::GetMetrics().AddCount("KP", "HIT");
+          metrics::GetMetrics().AddCount("KP", "HIT");
 #endif
-        return s;
-      }
+          return s;
+        } else {
 #ifndef NDEBUG
-      metrics::GetMetrics().AddCount("KP", "FAULT");
+          metrics::GetMetrics().AddCount("KP", "FAULT");
+#endif
+        }
+      } else {
+        int charge = hd->charge;
+        kp_cache->Release(cache_handle);
+        kp_cache->Erase(state.ikey);
+        kp_cache->AdjustCapacity(charge);
+
+        double ratio = static_cast<double>(kv_cache->TotalCharge()) / static_cast<double>(block_cache->TotalCharge());
+        kv_cache->AdjustCapacity(-charge * (ratio / (1.0 + ratio)));
+        block_cache->AdjustCapacity(-charge * (1.0 / (1.0 + ratio)));
+#ifndef NDEBUG
+        metrics::GetMetrics().AddCount("KP", "GHOST");
+      }
     } else {
       metrics::GetMetrics().AddCount("KP", "MISS");
 #endif

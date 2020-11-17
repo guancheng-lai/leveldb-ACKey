@@ -50,12 +50,12 @@ class CacheTest : public testing::Test {
   }
 
   void Insert(int key, int value, int charge = 1) {
-    cache_->Release(cache_->Insert(EncodeKey(key), EncodeValue(value), charge,
+    cache_->Release(cache_->Insert(EncodeKey(key), EncodeValue(value), charge, false,
                                    &CacheTest::Deleter));
   }
 
   Cache::Handle* InsertAndReturnHandle(int key, int value, int charge = 1) {
-    return cache_->Insert(EncodeKey(key), EncodeValue(value), charge,
+    return cache_->Insert(EncodeKey(key), EncodeValue(value), charge, false,
                           &CacheTest::Deleter);
   }
 

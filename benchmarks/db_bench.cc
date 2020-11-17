@@ -405,8 +405,8 @@ class Benchmark {
  public:
   Benchmark()
       : bk_cache_(FLAGS_cache_size >= 0 ? NewLRUCache(FLAGS_cache_size) : nullptr),
-        kv_cache_(FLAGS_cache_size >= 0 ? NewLRUCache(FLAGS_cache_size) : nullptr),
-        kp_cache_(FLAGS_cache_size >= 0 ? NewLRUCache(FLAGS_cache_size) : nullptr),
+        kv_cache_(FLAGS_cache_size >= 0 ? NewLRUCache(FLAGS_cache_size/2) : nullptr),
+        kp_cache_(FLAGS_cache_size >= 0 ? NewLRUCache(FLAGS_cache_size/2) : nullptr),
         filter_policy_(FLAGS_bloom_bits >= 0
                            ? NewBloomFilterPolicy(FLAGS_bloom_bits)
                            : nullptr),

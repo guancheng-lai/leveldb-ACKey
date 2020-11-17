@@ -134,6 +134,12 @@ void Table::ReadFilter(const Slice& filter_handle_value) {
 
 Table::~Table() { delete rep_; }
 
+static void AdjustCapacityByRatio(Cache* a, Cache* b, size_t adjustment) {
+  double ratio = static_cast<double>(a->TotalCharge()) / static_cast<double>(b->TotalCharge());
+  a->AdjustCapacity(adjustment * (ratio / (1.0 + ratio)));
+  b->AdjustCapacity(adjustment * (1.0 / (1.0 + ratio)));
+}
+
 static void DeleteBlock(void* arg, void* ignored) {
   delete reinterpret_cast<Block*>(arg);
 }
@@ -173,25 +179,39 @@ Iterator* Table::BlockReader(void* arg, const ReadOptions& options,
       Slice key(cache_key_buffer, sizeof(cache_key_buffer));
       cache_handle = block_cache->Lookup(key);
       if (cache_handle != nullptr) {
+        LRUHandle* hd = reinterpret_cast<LRUHandle *>(cache_handle);
+        if (!hd->is_ghost) {
 #ifndef NDEBUG
-        metrics::GetMetrics().AddCount("BLOCK", "HIT");
+          metrics::GetMetrics().AddCount("BLOCK", "HIT");
 #endif
-        block = reinterpret_cast<Block*>(block_cache->Value(cache_handle));
-      } else {
+          block = reinterpret_cast<Block *>(block_cache->Value(cache_handle));
+        } else {
 #ifndef NDEBUG
-        metrics::GetMetrics().AddCount("BLOCK", "MISS");
+          metrics::GetMetrics().AddCount("BLOCK", "GHOST");
 #endif
+          int block_size = hd->charge;
+          block_cache->Release(cache_handle);
+          block_cache->Erase(key);
+          AdjustCapacityByRatio(table->rep_->options.kv_cache, table->rep_->options.kp_cache, block_size);
+          cache_handle = nullptr;
+        }
+      }
+      if (cache_handle == nullptr) {
         s = ReadBlock(table->rep_->file, options, handle, &contents);
         if (s.ok()) {
           block = new Block(contents);
           if (contents.cachable && options.fill_cache) {
-            cache_handle = block_cache->Insert(key, block, block->size(),
+            cache_handle = block_cache->Insert(key, block, block->size(), false,
                                                &DeleteCachedBlock);
 #ifndef NDEBUG
-            metrics::GetMetrics().AddUsage("BK", block_cache->TotalCharge());
+            metrics::GetMetrics().AddUsage("BLOCK", block_cache->TotalCharge());
 #endif
           }
         }
+      } else {
+#ifndef NDEBUG
+        metrics::GetMetrics().AddCount("BLOCK", "MISS");
+#endif
       }
     } else {
       s = ReadBlock(table->rep_->file, options, handle, &contents);
@@ -251,6 +271,7 @@ Status Table::InternalGet(const ReadOptions& options, const Slice& k, void* arg,
               k,
               valInsert,
               valInsert->size(),
+              false,
               [](const Slice& key, void* value) { delete reinterpret_cast<Slice*>(value); }
             );
             ReleaseBlock(rep_->options.kv_cache, hd);
@@ -263,6 +284,7 @@ Status Table::InternalGet(const ReadOptions& options, const Slice& k, void* arg,
               k,
               keyPointer,
               sizeof(KeyPointer),
+              false,
               [](const Slice& key, void* value) { delete reinterpret_cast<KeyPointer*>(value); }
             );
             ReleaseBlock(rep_->options.kp_cache, hd);

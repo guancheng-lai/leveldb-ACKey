@@ -137,7 +137,7 @@ class LRUCache {
 
   // Like Cache methods, but with an extra "hash" parameter.
   Cache::Handle* Insert(const Slice& key, uint32_t hash, void* value,
-                        size_t charge,
+                        size_t charge, bool is_ghost,
                         void (*deleter)(const Slice& key, void* value));
   Cache::Handle* Lookup(const Slice& key, uint32_t hash);
   void Release(Cache::Handle* handle);
@@ -146,6 +146,10 @@ class LRUCache {
   size_t TotalCharge() const {
     MutexLock l(&mutex_);
     return usage_;
+  }
+  void AdjustCapacity(size_t adjustment) {
+    MutexLock l(&mutex_);
+    capacity_ += adjustment;
   }
 
  private:
@@ -244,7 +248,7 @@ void LRUCache::Release(Cache::Handle* handle) {
 }
 
 Cache::Handle* LRUCache::Insert(const Slice& key, uint32_t hash, void* value,
-                                size_t charge,
+                                size_t charge, bool is_ghost,
                                 void (*deleter)(const Slice& key,
                                                 void* value)) {
   MutexLock l(&mutex_);
@@ -272,6 +276,19 @@ Cache::Handle* LRUCache::Insert(const Slice& key, uint32_t hash, void* value,
   }
   while (usage_ > capacity_ && lru_.next != &lru_) {
     LRUHandle* old = lru_.next;
+    if (!old->is_ghost) {
+      LRU_Remove(old);
+      LRU_Append(&lru_, old);
+
+      old->deleter = [](const Slice &key, void *value) { delete reinterpret_cast<int*>(value); };
+      old->is_ghost = true;
+      old->value = new int(old->charge);
+      old->charge = 4;
+
+      usage_ -= (old->charge - 4);
+      continue;
+    }
+
     assert(old->refs == 1);
     bool erased = FinishErase(table_.Remove(old->key(), old->hash));
     if (!erased) {  // to avoid unused variable when compiled NDEBUG
@@ -320,6 +337,7 @@ class ShardedLRUCache : public Cache {
   LRUCache shard_[kNumShards];
   port::Mutex id_mutex_;
   uint64_t last_id_;
+  size_t adjust;
 
   static inline uint32_t HashSlice(const Slice& s) {
     return Hash(s.data(), s.size(), 0);
@@ -328,17 +346,17 @@ class ShardedLRUCache : public Cache {
   static uint32_t Shard(uint32_t hash) { return hash >> (32 - kNumShardBits); }
 
  public:
-  explicit ShardedLRUCache(size_t capacity) : last_id_(0) {
+  explicit ShardedLRUCache(size_t capacity) : last_id_(0), adjust(0) {
     const size_t per_shard = (capacity + (kNumShards - 1)) / kNumShards;
     for (int s = 0; s < kNumShards; s++) {
       shard_[s].SetCapacity(per_shard);
     }
   }
   ~ShardedLRUCache() override {}
-  Handle* Insert(const Slice& key, void* value, size_t charge,
+  Handle* Insert(const Slice& key, void* value, size_t charge, bool is_ghost,
                  void (*deleter)(const Slice& key, void* value)) override {
     const uint32_t hash = HashSlice(key);
-    return shard_[Shard(hash)].Insert(key, hash, value, charge, deleter);
+    return shard_[Shard(hash)].Insert(key, hash, value, charge, is_ghost, deleter);
   }
   Handle* Lookup(const Slice& key) override {
     const uint32_t hash = HashSlice(key);
@@ -370,6 +388,14 @@ class ShardedLRUCache : public Cache {
       total += shard_[s].TotalCharge();
     }
     return total;
+  }
+  void AdjustCapacity(size_t adjustment) override {
+    adjust += adjustment;
+    if (adjust > 4096 || adjust < -4096) {
+      for (int s = 0; s < kNumShards; s++) {
+        shard_[s].AdjustCapacity(adjustment / kNumShards);
+      }
+    }
   }
 };
 

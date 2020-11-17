@@ -33,6 +33,7 @@ namespace leveldb {
     LRUHandle* prev;
     size_t charge;  // TODO(opt): Only allow uint32_t?
     size_t key_length;
+    bool is_ghost;
     bool in_cache;     // Whether entry is in the cache.
     uint32_t refs;     // References, including cache reference, if present.
     uint32_t hash;     // Hash of key(); used for fast sharding and comparisons
@@ -76,7 +77,7 @@ class LEVELDB_EXPORT Cache {
   //
   // When the inserted entry is no longer needed, the key and
   // value will be passed to "deleter".
-  virtual Handle* Insert(const Slice& key, void* value, size_t charge,
+  virtual Handle* Insert(const Slice& key, void* value, size_t charge, bool is_ghost,
                          void (*deleter)(const Slice& key, void* value)) = 0;
 
   // If the cache has no mapping for "key", returns nullptr.
@@ -118,6 +119,8 @@ class LEVELDB_EXPORT Cache {
   // Return an estimate of the combined charges of all elements stored in the
   // cache.
   virtual size_t TotalCharge() const = 0;
+
+  virtual void AdjustCapacity(size_t adjustment) = 0;
 
  private:
   void LRU_Remove(Handle* e);
