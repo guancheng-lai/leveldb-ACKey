@@ -485,8 +485,10 @@ Status Version::Get(const ReadOptions& options, const LookupKey& k,
         block_cache->AdjustCapacity(-charge * (1.0 / (1.0 + ratio)));
 #ifndef NDEBUG
         metrics::GetMetrics().AddCount("KP", "GHOST");
+#endif
       }
     } else {
+#ifndef NDEBUG
       metrics::GetMetrics().AddCount("KP", "MISS");
 #endif
     }
