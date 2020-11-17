@@ -569,8 +569,8 @@ void PointCache::ReleaseKP(Cache::Handle* handle) {
 }
 void PointCache::AdjustPointCacheCapacity(size_t adjustment) {
   double ratio = static_cast<double>(TotalKvCharge()) / static_cast<double>(TotalKpCharge());
-  kv->AdjustCapacity(adjustment * (1.0 / (1.0 + ratio)));
-  kp->AdjustCapacity(adjustment * (ratio / (1.0 + ratio)));
+  kv->AdjustCapacity(adjustment * (ratio / (1.0 + ratio)));
+  kp->AdjustCapacity(adjustment * (1.0 / (1.0 + ratio)));
 }
 void PointCache::AdjustKVCapacity(size_t adjustment) {
   kv->AdjustCapacity(adjustment);
