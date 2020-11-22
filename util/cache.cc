@@ -147,8 +147,10 @@ class LRUCache {
     MutexLock l(&mutex_);
     return usage_;
   }
-  void AdjustCapacity(size_t adjustment) {
-    MutexLock l(&mutex_);
+  void AdjustCapacity(int adjustment) {
+    if (adjustment < 0 && capacity_ < (8 << 17)) {
+      return;
+    }
     capacity_ += adjustment;
   }
 
@@ -280,12 +282,12 @@ Cache::Handle* LRUCache::Insert(const Slice& key, uint32_t hash, void* value,
       LRU_Remove(old);
       LRU_Append(&lru_, old);
 
+      usage_ -= (old->charge - 4);
+
       old->deleter = [](const Slice &key, void *value) { delete reinterpret_cast<int*>(value); };
       old->is_ghost = true;
       old->value = new int(old->charge);
       old->charge = 4;
-
-      usage_ -= (old->charge - 4);
       continue;
     }
 
@@ -337,7 +339,8 @@ class ShardedLRUCache : public Cache {
   LRUCache shard_[kNumShards];
   port::Mutex id_mutex_;
   uint64_t last_id_;
-  size_t adjust;
+  mutable port::Mutex mutex_;
+  size_t adjust GUARDED_BY(mutex_);
 
   static inline uint32_t HashSlice(const Slice& s) {
     return Hash(s.data(), s.size(), 0);
@@ -389,7 +392,8 @@ class ShardedLRUCache : public Cache {
     }
     return total;
   }
-  void AdjustCapacity(size_t adjustment) override {
+  void AdjustCapacity(int adjustment) override {
+    MutexLock l(&mutex_);
     adjust += adjustment;
     if (adjust > 4096 || adjust < -4096) {
       for (int s = 0; s < kNumShards; s++) {

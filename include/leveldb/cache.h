@@ -120,7 +120,7 @@ class LEVELDB_EXPORT Cache {
   // cache.
   virtual size_t TotalCharge() const = 0;
 
-  virtual void AdjustCapacity(size_t adjustment) = 0;
+  virtual void AdjustCapacity(int adjustment) = 0;
 
  private:
   void LRU_Remove(Handle* e);
