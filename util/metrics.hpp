@@ -71,6 +71,7 @@ private:
       std::string cacheType = it.first;
       std::string cacheTypeGhost = "GHOST_" + it.first;
       std::string cacheTypeReal = "REAL_" + it.first;
+      std::string cacheCapacity = "CAPACITY_" + it.first;
       uint64_t totalActivityCount = 0;
       for (const auto& activity : it.second) {
         totalActivityCount += activity.second;
@@ -79,12 +80,10 @@ private:
       for (const auto& activity : it.second) {
         fs << activity.first << " rate = " << activity.second / static_cast<double>(totalActivityCount) << std::endl;
       }
-      fs << "Total Avg usage: " << cacheAvgUsage[cacheType].first << "/" << static_cast<double>(cacheAvgUsage[cacheType].second) << " = "
-          << cacheAvgUsage[cacheType].first / static_cast<double>(cacheAvgUsage[cacheType].second) << std::endl;
-      fs << "Ghost Avg usage: " << cacheAvgUsage[cacheTypeGhost].first << "/" << static_cast<double>(cacheAvgUsage[cacheTypeGhost].second) << " = "
-          << cacheAvgUsage[cacheTypeGhost].first / static_cast<double>(cacheAvgUsage[cacheTypeGhost].second) << std::endl;
-      fs << "Real Avg usage: " << cacheAvgUsage[cacheTypeReal].first << "/" << static_cast<double>(cacheAvgUsage[cacheTypeReal].second) << " = "
-        << cacheAvgUsage[cacheTypeReal].first / static_cast<double>(cacheAvgUsage[cacheTypeReal].second) << std::endl;
+      fs << "Total Avg usage: " << cacheAvgUsage[cacheType].first / static_cast<double>(cacheAvgUsage[cacheType].second) << std::endl;
+      fs << "Ghost Avg usage: " << cacheAvgUsage[cacheTypeGhost].first / static_cast<double>(cacheAvgUsage[cacheTypeGhost].second) << std::endl;
+      fs << "Real Avg usage: "  << cacheAvgUsage[cacheTypeReal].first / static_cast<double>(cacheAvgUsage[cacheTypeReal].second) << std::endl;
+      fs << "Real Capacity: "  << cacheAvgUsage[cacheCapacity].first / static_cast<double>(cacheAvgUsage[cacheCapacity].second) << std::endl;
       fs << "--------------" << cacheType << "--------------\n";
     }
 
