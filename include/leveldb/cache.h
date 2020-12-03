@@ -130,7 +130,10 @@ class LEVELDB_EXPORT Cache {
   virtual size_t TotalCharge() const = 0;
 
   // Adjust cache capacity, it could be either expanding or shrinking
-  virtual void AdjustCapacity(size_t capacity) = 0;
+  virtual void AdjustCapacity(int capacity) = 0;
+
+  // Return the cache capacity
+  virtual size_t GetCapacity() const = 0;
 
  private:
   void LRU_Remove(Handle* e);
@@ -148,13 +151,13 @@ class LEVELDB_EXPORT Cache {
 // 4.4.3's builtin hashtable.
 class LEVELDB_EXPORT HandleTable {
 public:
-  HandleTable() : length_(0), elems_(0), charge(0), list_(nullptr) { Resize(); }
+  HandleTable() : length_(0), elems_(0), list_(nullptr) { Resize(); }
   ~HandleTable() { delete[] list_; }
   LRUHandle *Lookup(const Slice &key, uint32_t hash);
   LRUHandle *Insert(LRUHandle *h);
   LRUHandle *InsertGhost(const Slice &key, void *value, void (*deleter)(const Slice &key, void *value));
   LRUHandle *Remove(const Slice &key, uint32_t hash);
-  size_t TotalCharge() const { return charge; }
+  size_t TotalCharge() const { return elems_; }
 
 private:
   // The table consists of an array of buckets where each bucket is
@@ -163,7 +166,6 @@ private:
   uint32_t length_;
   uint32_t elems_;
   LRUHandle **list_;
-  uint32_t charge;
 
   // Return a pointer to slot that points to a cache entry that
   // matches key/hash.  If there is no such cache entry, return a
@@ -177,9 +179,12 @@ class LEVELDB_EXPORT AdaptiveCache : public Cache {
  private:
   Cache *real;
   HandleTable* ghost;
+  port::Mutex mutex_;
+  int accumulateAdjustment GUARDED_BY(mutex_);
+
  public:
   AdaptiveCache() = delete;
-  explicit AdaptiveCache(size_t capacity) : real(NewLRUCache(capacity)), ghost(new HandleTable()) {}
+  explicit AdaptiveCache(size_t capacity) : real(NewLRUCache(capacity)), ghost(new HandleTable()), accumulateAdjustment(0) {}
   ~AdaptiveCache() { delete real, delete ghost; }
   Cache::Handle* Lookup(const Slice& key, int &ghostHit);
   Cache::Handle* Insert(const Slice& key, void* value, size_t charge, void (*deleter)(const Slice&, void*)) override;
@@ -192,7 +197,8 @@ class LEVELDB_EXPORT AdaptiveCache : public Cache {
   size_t TotalCharge() const override;
   size_t TotalRealCharge() const;
   size_t TotalGhostCharge() const;
-  void AdjustCapacity(size_t size) override;
+  void AdjustCapacity(int size) override;
+  size_t GetCapacity() const override;
   Cache* realCache() const;
   HandleTable* ghostCache() const;
 };
@@ -214,7 +220,8 @@ class LEVELDB_EXPORT BlockCache : public Cache {
   size_t TotalCharge() const;
   size_t TotalRealCharge() const;
   size_t TotalGhostCharge() const;
-  void AdjustCapacity(size_t adjust);
+  void AdjustCapacity(int adjust);
+  size_t GetCapacity() const;
 };
 
 class LEVELDB_EXPORT PointCache {
@@ -232,10 +239,13 @@ class LEVELDB_EXPORT PointCache {
   void* ValueKP(Cache::Handle* handle);
   void ReleaseKV(Cache::Handle* handle);
   void ReleaseKP(Cache::Handle* handle);
-  void AdjustPointCacheCapacity(size_t adjustment);
-  void AdjustKVCapacity(size_t adjustment);
-  void AdjustKPCapacity(size_t adjustment);
+  void AdjustPointCacheCapacity(int adjustment);
+  void AdjustKVCapacity(int adjustment);
+  void AdjustKPCapacity(int adjustment);
+  size_t GetKVCapacity() const;
+  size_t GetKPCapacity() const;
   size_t TotalCharge() const;
+  size_t TotalRealCharge() const;
   size_t TotalKvCharge() const;
   size_t TotalKpCharge() const;
   AdaptiveCache* kvCache() const;

@@ -433,11 +433,10 @@ Status Version::Get(const ReadOptions& options, const LookupKey& k,
       }
     } else if (ghost_hit_and_adjust_boundary > 0) {
       state.warm = true;
-      if (point_cache->TotalCharge() + block_cache->TotalCharge() > state.vset->options_->cache_capacity) {
         point_cache->AdjustKVCapacity(ghost_hit_and_adjust_boundary);
-        point_cache->AdjustKPCapacity(-static_cast<double>(ghost_hit_and_adjust_boundary) / 3.0);
-        block_cache->AdjustCapacity(-static_cast<double>(ghost_hit_and_adjust_boundary * 2) / 3.0);
-      }
+        double ratio = static_cast<double>(point_cache->TotalKpCharge()) / static_cast<double>(block_cache->TotalCharge());
+        point_cache->AdjustKPCapacity(-static_cast<int>(ghost_hit_and_adjust_boundary * (ratio / (ratio + 1.0))));
+        block_cache->AdjustCapacity(-static_cast<int>(ghost_hit_and_adjust_boundary * (1.0 / (ratio + 1.0))));
 #ifndef NDEBUG
       metrics::GetMetrics().AddCount("KV", "GHOST");
     } else {
@@ -463,11 +462,10 @@ Status Version::Get(const ReadOptions& options, const LookupKey& k,
       metrics::GetMetrics().AddCount("KP", "FAULT");
 #endif
     } else if (ghost_hit_and_adjust_boundary > 0) {
-      if (point_cache->TotalCharge() + block_cache->TotalCharge() > state.vset->options_->cache_capacity) {
         point_cache->AdjustKPCapacity(ghost_hit_and_adjust_boundary);
-        point_cache->AdjustKVCapacity(-static_cast<double>(ghost_hit_and_adjust_boundary) / 3.0);
-        block_cache->AdjustCapacity(-static_cast<double>(ghost_hit_and_adjust_boundary * 2) / 3.0);
-      }
+        double ratio = static_cast<double>(point_cache->TotalKvCharge()) / static_cast<double>(block_cache->TotalCharge());
+        point_cache->AdjustKVCapacity(-static_cast<int>(ghost_hit_and_adjust_boundary * ratio / (ratio + 1.0)));
+        block_cache->AdjustCapacity(-static_cast<int>(ghost_hit_and_adjust_boundary / (ratio + 1.0)));
 #ifndef NDEBUG
       metrics::GetMetrics().AddCount("KP", "GHOST");
     } else {
