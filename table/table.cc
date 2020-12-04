@@ -183,10 +183,9 @@ Iterator* Table::BlockReader(void* arg, const ReadOptions& options,
 #ifndef NDEBUG
           metrics::GetMetrics().AddCount("BLOCK", "GHOST");
 #endif
-          if (block_cache->TotalCharge() + table->rep_->options.point_cache->TotalCharge() > table->rep_->options.cache_capacity) {
-            block_cache->AdjustCapacity(ghost_hit_and_adjust_boundary);
-            table->rep_->options.point_cache->AdjustPointCacheCapacity(-ghost_hit_and_adjust_boundary);
-          }
+          PointCache* point_cache = table->rep_->options.point_cache;
+          block_cache->AdjustCapacity(ghost_hit_and_adjust_boundary);
+          point_cache->AdjustCapacity(-ghost_hit_and_adjust_boundary);
         } else {
 #ifndef NDEBUG
         metrics::GetMetrics().AddCount("BLOCK", "MISS");
@@ -202,6 +201,7 @@ Iterator* Table::BlockReader(void* arg, const ReadOptions& options,
             metrics::GetMetrics().AddUsage("BLOCK", block_cache->TotalCharge());
             metrics::GetMetrics().AddUsage("GHOST_BLOCK", block_cache->TotalGhostCharge());
             metrics::GetMetrics().AddUsage("REAL_BLOCK", block_cache->TotalRealCharge());
+            metrics::GetMetrics().AddUsage("CAPACITY_BLOCK", block_cache->GetCapacity());
 #endif
           }
         }
@@ -235,7 +235,7 @@ Iterator* Table::NewIterator(const ReadOptions& options) const {
 }
 
 Status Table::InternalGet(const ReadOptions& options, const Slice& k, void* arg,
-                          KeyPointer *keyPointer, bool warm,
+                          uint64_t file_number, uint64_t file_size, bool warm,
                           int (*handle_result)(void*, const Slice&,
                                                 const Slice&)) {
   Status s;
@@ -258,7 +258,7 @@ Status Table::InternalGet(const ReadOptions& options, const Slice& k, void* arg,
           if (warm) {
             // Insert into KV
             size_t valueSize = block_iter->value().size();
-            char* valueBuffer = new char[valueSize];
+            char* valueBuffer = new char[valueSize+1];
             memcpy(valueBuffer, block_iter->value().data(), valueSize);
             Slice* valueSlice = new Slice(valueBuffer, valueSize);
             Cache::Handle* hd = point_cache->InsertKV(k, valueSlice, valueSize,
@@ -266,20 +266,22 @@ Status Table::InternalGet(const ReadOptions& options, const Slice& k, void* arg,
             );
             point_cache->ReleaseKV(hd);
 #ifndef NDEBUG
-            metrics::GetMetrics().AddUsage("REAL_KV", point_cache->kvCache()->TotalRealCharge());
-            metrics::GetMetrics().AddUsage("GHOST_KV", point_cache->kvCache()->TotalGhostCharge());
-            metrics::GetMetrics().AddUsage("KV", point_cache->kvCache()->TotalCharge());
+            metrics::GetMetrics().AddUsage("REAL_KV", point_cache->KVCache()->TotalRealCharge());
+            metrics::GetMetrics().AddUsage("GHOST_KV", point_cache->KVCache()->TotalGhostCharge());
+            metrics::GetMetrics().AddUsage("KV", point_cache->TotalKVCharge());
+            metrics::GetMetrics().AddUsage("CAPACITY_KV", point_cache->GetKVCapacity());
 #endif
           } else {
             // Insert into KP
-            Cache::Handle* hd = rep_->options.point_cache->InsertKP(k, keyPointer, sizeof(KeyPointer),
+            Cache::Handle* hd = point_cache->InsertKP(k, new KeyPointer(file_number, file_size), 2,
               [](const Slice& key, void* value) { delete reinterpret_cast<KeyPointer*>(value); }
             );
             point_cache->ReleaseKP(hd);
 #ifndef NDEBUG
-            metrics::GetMetrics().AddUsage("REAL_KP", point_cache->kpCache()->TotalRealCharge());
-            metrics::GetMetrics().AddUsage("GHOST_KP", point_cache->kpCache()->TotalGhostCharge());
-            metrics::GetMetrics().AddUsage("KP", point_cache->kvCache()->TotalCharge());
+            metrics::GetMetrics().AddUsage("REAL_KP", point_cache->KPCache()->TotalRealCharge());
+            metrics::GetMetrics().AddUsage("GHOST_KP", point_cache->KPCache()->TotalGhostCharge());
+            metrics::GetMetrics().AddUsage("KP", point_cache->TotalKPCharge());
+            metrics::GetMetrics().AddUsage("CAPACITY_KP", point_cache->GetKPCapacity());
 #endif
           }
         }

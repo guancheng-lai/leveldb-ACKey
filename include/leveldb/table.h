@@ -77,7 +77,7 @@ class LEVELDB_EXPORT Table {
   // to Seek(key).  May not make such a call if filter policy says
   // that key is not present.
   Status InternalGet(const ReadOptions&, const Slice& key, void* arg,
-                     KeyPointer *keyPointer, bool warm,
+                     uint64_t file_number, uint64_t file_size, bool warm,
                      int (*handle_result)(void* arg, const Slice& k,
                                            const Slice& v));
 

@@ -22,6 +22,7 @@
 
 #include "leveldb/export.h"
 #include "leveldb/slice.h"
+#include "port/port.h"
 
 namespace leveldb {
 
@@ -129,7 +130,10 @@ class LEVELDB_EXPORT Cache {
   virtual size_t TotalCharge() const = 0;
 
   // Adjust cache capacity, it could be either expanding or shrinking
-  virtual void AdjustCapacity(size_t capacity) = 0;
+  virtual void AdjustCapacity(int capacity) = 0;
+
+  // Return the cache capacity
+  virtual size_t GetCapacity() const = 0;
 
  private:
   void LRU_Remove(Handle* e);
@@ -143,9 +147,12 @@ class LEVELDB_EXPORT Cache {
 class LEVELDB_EXPORT AdaptiveCache : public Cache {
  private:
   Cache *real, *ghost;
+  port::Mutex mutex_;
+  int accumulateAdjustment GUARDED_BY(mutex_);
+
  public:
   AdaptiveCache() = delete;
-  explicit AdaptiveCache(size_t capacity) : real(NewLRUCache(capacity/2)), ghost(NewLRUCache(capacity/2)) {}
+  explicit AdaptiveCache(size_t capacity) : real(NewLRUCache(capacity/2)), ghost(NewLRUCache(capacity/2)), accumulateAdjustment(0) {}
   ~AdaptiveCache() { delete real, delete ghost; }
   Cache::Handle* Lookup(const Slice& key, int &ghostHit);
   Cache::Handle* Insert(const Slice& key, void* value, size_t charge, void (*deleter)(const Slice&, void*)) override;
@@ -158,7 +165,8 @@ class LEVELDB_EXPORT AdaptiveCache : public Cache {
   size_t TotalCharge() const override;
   size_t TotalRealCharge() const;
   size_t TotalGhostCharge() const;
-  void AdjustCapacity(size_t size) override;
+  void AdjustCapacity(int size) override;
+  size_t GetCapacity() const override;
   Cache* realCache() const;
   Cache* ghostCache() const;
 };
@@ -166,21 +174,21 @@ class LEVELDB_EXPORT AdaptiveCache : public Cache {
 class LEVELDB_EXPORT BlockCache : public Cache {
  private:
   AdaptiveCache* bk;
-  size_t adjustment;
  public:
-  explicit BlockCache(size_t capacity) : bk{new AdaptiveCache(capacity)}, adjustment(0) {}
+  explicit BlockCache(size_t capacity) : bk{new AdaptiveCache(capacity)} {}
   ~BlockCache() { delete bk; }
   Cache::Handle* Lookup(const Slice& key, int &ghostHit);
-  Cache::Handle* Insert(const Slice& key, void* value, size_t charge, void (*deleter)(const Slice&, void*));
-  Handle* Lookup(const Slice& key);
-  void Release(Handle* handle);
-  void Erase(const Slice& key);
-  void* Value(Cache::Handle* handle);
-  uint64_t NewId();
-  size_t TotalCharge() const;
+  Cache::Handle* Insert(const Slice& key, void* value, size_t charge, void (*deleter)(const Slice&, void*)) override;
+  Handle* Lookup(const Slice& key) override;
+  void Release(Handle* handle) override;
+  void Erase(const Slice& key) override;
+  void* Value(Cache::Handle* handle) override;
+  uint64_t NewId() override;
+  size_t TotalCharge() const override;
   size_t TotalRealCharge() const;
   size_t TotalGhostCharge() const;
-  void AdjustCapacity(size_t adjust);
+  void AdjustCapacity(int adjust) override;
+  size_t GetCapacity() const override;
 };
 
 class LEVELDB_EXPORT PointCache {
@@ -198,14 +206,16 @@ class LEVELDB_EXPORT PointCache {
   void* ValueKP(Cache::Handle* handle);
   void ReleaseKV(Cache::Handle* handle);
   void ReleaseKP(Cache::Handle* handle);
-  void AdjustPointCacheCapacity(size_t adjustment);
-  void AdjustKVCapacity(size_t adjustment);
-  void AdjustKPCapacity(size_t adjustment);
+  void AdjustCapacity(int adjustment);
+  void AdjustKVCapacity(int adjustment);
+  void AdjustKPCapacity(int adjustment);
   size_t TotalCharge() const;
-  size_t TotalKvCharge() const;
-  size_t TotalKpCharge() const;
-  AdaptiveCache* kvCache() const;
-  AdaptiveCache* kpCache() const;
+  size_t TotalKVCharge() const;
+  size_t TotalKPCharge() const;
+  AdaptiveCache* KVCache() const;
+  AdaptiveCache* KPCache() const;
+  size_t GetKVCapacity() const;
+  size_t GetKPCapacity() const;
 };
 
 }  // namespace leveldb

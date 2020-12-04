@@ -8,7 +8,6 @@
 #include <cstdio>
 #include <cstdlib>
 
-#include "port/port.h"
 #include "port/thread_annotations.h"
 #include "util/hash.h"
 #include "util/mutexlock.h"
@@ -134,7 +133,7 @@ class LRUCache {
 
   // Separate from constructor so caller can easily make an array of LRUCache
   void SetCapacity(size_t capacity) { capacity_ = capacity; }
-  void AdjustCapacity(size_t capacity) { capacity_ += capacity; }
+  void AdjustCapacity(int capacity) { capacity_ += capacity; }
 
   // Like Cache methods, but with an extra "hash" parameter.
   Cache::Handle* Insert(const Slice& key, uint32_t hash, void* value,
@@ -315,12 +314,7 @@ Cache::Handle* LRUCache::Insert(const Slice& key, uint32_t hash, void* value, si
   }
   while (usage_ > capacity_ && lru_.next != &lru_) {
     LRUHandle* old = lru_.next;
-    int* metadata = new int(old->charge + old->key().size());
-    size_t sz = old->key_length;
-    char* buffer = new char[sz+1];
-    std::memcpy(buffer, old->key_data, sz);
-    std::string ghostKey(&buffer[0], &buffer[0] + sz);
-    auto* hd = ghost->Insert(ghostKey, metadata, sizeof(int),
+    auto* hd = ghost->Insert(Slice(old->key_data, old->key_length), new int(old->charge), 1,
      [](const Slice& key, void* value) { delete reinterpret_cast<int*>(value); }
     );
     ghost->Release(hd);
@@ -372,6 +366,7 @@ class ShardedLRUCache : public Cache {
   LRUCache shard_[kNumShards];
   port::Mutex id_mutex_;
   uint64_t last_id_;
+  size_t capacity_;
 
   static inline uint32_t HashSlice(const Slice& s) {
     return Hash(s.data(), s.size(), 0);
@@ -380,7 +375,7 @@ class ShardedLRUCache : public Cache {
   static uint32_t Shard(uint32_t hash) { return hash >> (32 - kNumShardBits); }
 
  public:
-  explicit ShardedLRUCache(size_t capacity) : last_id_(0) {
+  explicit ShardedLRUCache(size_t capacity) : last_id_(0), capacity_(capacity) {
     const size_t per_shard = (capacity + (kNumShards - 1)) / kNumShards;
     for (int s = 0; s < kNumShards; s++) {
       shard_[s].SetCapacity(per_shard);
@@ -428,10 +423,15 @@ class ShardedLRUCache : public Cache {
     }
     return total;
   }
-  void AdjustCapacity(size_t capacity) override {
+  void AdjustCapacity(int adjustment) override {
+    if (adjustment < 0 && capacity_ < 8 << 18) return;
     for (auto& lru : shard_) {
-      lru.AdjustCapacity(capacity / kNumShards);
+      lru.AdjustCapacity(adjustment / kNumShards);
     }
+    capacity_ += adjustment;
+  }
+  size_t GetCapacity() const override {
+    return capacity_;
   }
 };
 
@@ -473,8 +473,18 @@ size_t AdaptiveCache::TotalRealCharge() const {
 size_t AdaptiveCache::TotalGhostCharge() const {
   return ghost->TotalCharge();
 }
-void AdaptiveCache::AdjustCapacity(size_t size) {
-  real->AdjustCapacity(size);
+void AdaptiveCache::AdjustCapacity(int adjustment) {
+  MutexLock l(&mutex_);
+  accumulateAdjustment += adjustment;
+  if (accumulateAdjustment > 4096 || accumulateAdjustment < -4096) {
+    accumulateAdjustment = 0;
+    double ratio = static_cast<double>(ghost->TotalCharge()) / static_cast<double>(real->TotalCharge());
+    ghost->AdjustCapacity(static_cast<int>(adjustment * ratio / (ratio + 1.0)));
+    real->AdjustCapacity(static_cast<int>(adjustment / (ratio + 1.0)));
+  }
+}
+size_t AdaptiveCache::GetCapacity() const {
+  return real->GetCapacity();
 }
 Cache::Handle* AdaptiveCache::Lookup(const Slice& key) {
   assert(false);
@@ -516,11 +526,11 @@ size_t BlockCache::TotalRealCharge() const {
 size_t BlockCache::TotalGhostCharge() const {
   return bk->TotalGhostCharge();
 }
-void BlockCache::AdjustCapacity(size_t adjust) {
-  adjustment += adjust;
-  if (adjustment > 4096 || -adjustment > 4096) {
-    bk->AdjustCapacity(adjust);
-  }
+void BlockCache::AdjustCapacity(int adjustment) {
+  bk->AdjustCapacity(adjustment);
+}
+size_t BlockCache::GetCapacity() const {
+  return bk->GetCapacity();
 }
 Cache::Handle *BlockCache::Lookup(const Slice &key) {
   return bk->Lookup(key);
@@ -535,18 +545,18 @@ void BlockCache::Erase(const Slice &key) {
 
 // PointCache
 Cache::Handle* PointCache::InsertKV(const Slice& key, void* value, size_t charge, void (*deleter)(const Slice&, void*)) {
-  return kv->realCache()->InsertARC(key, value, charge, kv->ghostCache(), deleter);
+  return kv->Insert(key, value, charge, deleter);
 }
 Cache::Handle* PointCache::InsertKP(const Slice& key, void* value, size_t charge, void (*deleter)(const Slice&, void*)) {
-  return kp->realCache()->InsertARC(key, value, charge, kp->ghostCache(), deleter);
+  return kp->Insert(key, value, charge, deleter);
 }
 size_t PointCache::TotalCharge() const {
   return kv->TotalCharge() + kp->TotalCharge();
 }
-size_t PointCache::TotalKvCharge() const {
+size_t PointCache::TotalKVCharge() const {
   return kv->TotalCharge();
 }
-size_t PointCache::TotalKpCharge() const {
+size_t PointCache::TotalKPCharge() const {
   return kp->TotalCharge();
 }
 Cache::Handle* PointCache::LookupKV(const Slice& key, int& ghostHit) {
@@ -567,22 +577,28 @@ void PointCache::ReleaseKV(Cache::Handle* handle) {
 void PointCache::ReleaseKP(Cache::Handle* handle) {
   kp->Release(handle);
 }
-void PointCache::AdjustPointCacheCapacity(size_t adjustment) {
-  double ratio = static_cast<double>(TotalKvCharge()) / static_cast<double>(TotalKpCharge());
+void PointCache::AdjustCapacity(int adjustment) {
+  double ratio = static_cast<double>(TotalKVCharge()) / static_cast<double>(TotalKPCharge());
   kv->AdjustCapacity(adjustment * (ratio / (1.0 + ratio)));
-  kp->AdjustCapacity(adjustment * (1.0 / (1.0 + ratio)));
+  kp->AdjustCapacity(adjustment / (1.0 + ratio));
 }
-void PointCache::AdjustKVCapacity(size_t adjustment) {
+void PointCache::AdjustKVCapacity(int adjustment) {
   kv->AdjustCapacity(adjustment);
 }
-void PointCache::AdjustKPCapacity(size_t adjustment) {
+void PointCache::AdjustKPCapacity(int adjustment) {
   kp->AdjustCapacity(adjustment);
 }
-AdaptiveCache* PointCache::kvCache() const {
+AdaptiveCache* PointCache::KVCache() const {
   return kv;
 }
-AdaptiveCache* PointCache::kpCache() const {
+AdaptiveCache* PointCache::KPCache() const {
   return kp;
+}
+size_t PointCache::GetKVCapacity() const {
+  return kv->GetCapacity();
+}
+size_t PointCache::GetKPCapacity() const {
+  return kp->GetCapacity();
 }
 // PointCache
 
